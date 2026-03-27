@@ -267,8 +267,7 @@ function eventToAddPayload(event) {
         name: event.name,
         weekdays: event.weekdays,
         timeslots,
-        tags: event.tags.length ? event.tags : undefined,
-        enabled: event.enabled
+        tags: event.tags.length ? event.tags : undefined
     };
 }
 function eventToEditPayload(event) {

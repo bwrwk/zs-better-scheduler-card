@@ -134,8 +134,7 @@ export function eventToAddPayload(event: UiScheduleEvent): SchedulerAddPayload {
     name: event.name,
     weekdays: event.weekdays,
     timeslots,
-    tags: event.tags.length ? event.tags : undefined,
-    enabled: event.enabled
+    tags: event.tags.length ? event.tags : undefined
   };
 }
 
