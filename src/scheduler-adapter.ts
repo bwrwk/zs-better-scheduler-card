@@ -93,6 +93,10 @@ export function validateUiEvent(event: UiScheduleEvent): string[] {
       errors.push("Duration musi byc wieksze od 0.");
     }
 
+    if ((event.durationMinutes ?? 0) < 2) {
+      errors.push("Na backendzie scheduler-component minimalne pewne duration to 2 minuty.");
+    }
+
     if (event.durationMinutes) {
       const result = addMinutesToTime(event.startTime, event.durationMinutes);
       if (result.crossesMidnight) {

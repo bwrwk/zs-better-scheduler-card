@@ -577,6 +577,15 @@ export class ZsBetterSchedulerCard extends LitElement {
                     ${formatActionSummary(this.draft)}
                   </div>
 
+                  ${this.draft.action.kind === "turn_on_for_duration"
+                    ? html`
+                        <div class="warning">
+                          Dla obecnego backendu bezpieczne minimum dla "na czas" to 2 minuty. Slot po 1 minucie
+                          bywa pomijany przez scheduler-component.
+                        </div>
+                      `
+                    : nothing}
+
                   ${validationErrors.length
                     ? html`<div class="warning">${validationErrors.map((error) => html`<div>${error}</div>`)}</div>`
                     : nothing}

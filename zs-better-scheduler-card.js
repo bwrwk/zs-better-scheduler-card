@@ -232,6 +232,9 @@ function validateUiEvent(event) {
         if (!event.durationMinutes || event.durationMinutes < 1) {
             errors.push("Duration musi byc wieksze od 0.");
         }
+        if ((event.durationMinutes ?? 0) < 2) {
+            errors.push("Na backendzie scheduler-component minimalne pewne duration to 2 minuty.");
+        }
         if (event.durationMinutes) {
             const result = addMinutesToTime(event.startTime, event.durationMinutes);
             if (result.crossesMidnight) {
@@ -1070,6 +1073,15 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                     ${this.draft.target.label || this.draft.target.entityId || "Brak targetu"} |
                     ${formatActionSummary(this.draft)}
                   </div>
+
+                  ${this.draft.action.kind === "turn_on_for_duration"
+            ? b `
+                        <div class="warning">
+                          Dla obecnego backendu bezpieczne minimum dla "na czas" to 2 minuty. Slot po 1 minucie
+                          bywa pomijany przez scheduler-component.
+                        </div>
+                      `
+            : A}
 
                   ${validationErrors.length
             ? b `<div class="warning">${validationErrors.map((error) => b `<div>${error}</div>`)}</div>`
