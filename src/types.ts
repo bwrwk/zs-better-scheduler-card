@@ -109,7 +109,7 @@ export type SchedulerBackendItem = {
   schedule_id?: string;
   entity_id?: string;
   name?: string;
-  weekdays?: string[];
+  weekdays?: string[] | string;
   tags?: string[];
   enabled?: boolean;
   timeslots?: Array<{

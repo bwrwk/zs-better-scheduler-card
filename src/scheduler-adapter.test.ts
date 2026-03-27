@@ -131,4 +131,27 @@ describe("backendItemToProjection", () => {
     expect(projection.reasonCode).toBe("multiple_actions");
     expect(projection.details[0]).toContain("2");
   });
+
+  it("supports backend weekday aliases like daily", () => {
+    const item: SchedulerBackendItem = {
+      entity_id: "switch.schedule_daily_alias",
+      name: "Daily alias",
+      weekdays: "daily",
+      timeslots: [
+        {
+          start: "09:44",
+          actions: [{ entity_id: "light.salon", service: "light.turn_on" }]
+        }
+      ]
+    };
+
+    const projection = backendItemToProjection(item);
+
+    expect(projection.mode).toBe("editable");
+    if (projection.mode !== "editable") {
+      return;
+    }
+
+    expect(projection.event.weekdays).toEqual(["mon", "tue", "wed", "thu", "fri", "sat", "sun"]);
+  });
 });

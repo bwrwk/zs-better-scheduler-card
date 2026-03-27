@@ -308,7 +308,18 @@ function sameConditions(left, right) {
 }
 function asWeekdays(days) {
     const supported = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-    return (days ?? []).filter((day) => supported.includes(day));
+    const aliases = {
+        daily: supported,
+        everyday: supported,
+        workday: ["mon", "tue", "wed", "thu", "fri"],
+        weekdays: ["mon", "tue", "wed", "thu", "fri"],
+        weekend: ["sat", "sun"],
+        weekends: ["sat", "sun"]
+    };
+    const rawDays = Array.isArray(days) ? days : days ? [days] : [];
+    const expanded = rawDays.flatMap((day) => aliases[day] ?? [day]);
+    const filtered = expanded.filter((day) => supported.includes(day));
+    return [...new Set(filtered)];
 }
 function actionLabelForService(service, durationMinutes) {
     if (service === "automation.trigger") {
@@ -335,7 +346,7 @@ function backendItemToProjection(item) {
         return makeReadonlyProjection(item, "no_timeslots", "Brak timeslotow", "Harmonogram nie zawiera zadnych timeslotow.", ["Ten wpis nie ma zadnego momentu startu do pokazania w prostym modelu eventu."], ["Sprawdz wpis w oryginalnym schedulerze lub utworz go ponownie w tej karcie."]);
     }
     if (!weekdays.length) {
-        return makeReadonlyProjection(item, "unsupported_weekdays", "Nietypowe dni", "Ten harmonogram uzywa dni spoza prostego modelu UI.", [`Odebrane dni: ${(item.weekdays ?? []).join(", ") || "brak"}`], ["Obecna karta wspiera tylko mon-sun w prostym modelu event-first."]);
+        return makeReadonlyProjection(item, "unsupported_weekdays", "Nietypowe dni", "Ten harmonogram uzywa dni spoza prostego modelu UI.", [`Odebrane dni: ${Array.isArray(item.weekdays) ? item.weekdays.join(", ") : item.weekdays ?? "brak"}`], ["Obecna karta wspiera tylko mon-sun w prostym modelu event-first."]);
     }
     if (timeslots.length > 2) {
         return makeReadonlyProjection(item, "too_many_timeslots", "Za duzo timeslotow", "MVP obsluguje tylko pojedynczy event lub pare start/stop.", [`Liczba timeslotow: ${timeslots.length}`], ["Ten wpis wyglada na bardziej zlozony scenariusz niz prosty event."]);

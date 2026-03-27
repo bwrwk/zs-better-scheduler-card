@@ -199,9 +199,21 @@ function sameConditions(
   return JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
 }
 
-function asWeekdays(days?: string[]): Weekday[] {
+function asWeekdays(days?: string[] | string): Weekday[] {
   const supported: Weekday[] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
-  return (days ?? []).filter((day): day is Weekday => supported.includes(day as Weekday));
+  const aliases: Record<string, Weekday[]> = {
+    daily: supported,
+    everyday: supported,
+    workday: ["mon", "tue", "wed", "thu", "fri"],
+    weekdays: ["mon", "tue", "wed", "thu", "fri"],
+    weekend: ["sat", "sun"],
+    weekends: ["sat", "sun"]
+  };
+
+  const rawDays = Array.isArray(days) ? days : days ? [days] : [];
+  const expanded = rawDays.flatMap((day) => aliases[day] ?? [day]);
+  const filtered = expanded.filter((day): day is Weekday => supported.includes(day as Weekday));
+  return [...new Set(filtered)];
 }
 
 function actionLabelForService(service: string, durationMinutes?: number): string {
@@ -244,7 +256,7 @@ export function backendItemToProjection(item: SchedulerBackendItem): UiScheduleP
       "unsupported_weekdays",
       "Nietypowe dni",
       "Ten harmonogram uzywa dni spoza prostego modelu UI.",
-      [`Odebrane dni: ${(item.weekdays ?? []).join(", ") || "brak"}`],
+      [`Odebrane dni: ${Array.isArray(item.weekdays) ? item.weekdays.join(", ") : item.weekdays ?? "brak"}`],
       ["Obecna karta wspiera tylko mon-sun w prostym modelu event-first."]
     );
   }
