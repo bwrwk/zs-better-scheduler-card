@@ -219,6 +219,30 @@ export class ZsBetterSchedulerCard extends LitElement {
       gap: 6px;
     }
 
+    .target-results {
+      display: grid;
+      gap: 8px;
+      max-height: 220px;
+      overflow: auto;
+      padding: 4px 0;
+    }
+
+    .target-option {
+      display: grid;
+      gap: 2px;
+      padding: 10px 12px;
+      text-align: left;
+      border-radius: 12px;
+      background: rgba(24, 84, 62, 0.06);
+      color: var(--primary-text-color);
+      border: 1px solid rgba(127, 127, 127, 0.14);
+    }
+
+    .target-option.selected {
+      background: rgba(24, 84, 62, 0.14);
+      border-color: rgba(24, 84, 62, 0.28);
+    }
+
     .stack {
       display: grid;
       gap: 8px;
@@ -470,18 +494,24 @@ export class ZsBetterSchedulerCard extends LitElement {
                       />
                     </label>
                     <label>
-                      Target
-                      <select .value=${this.draft.target.entityId} @change=${this.handleTargetSelectionChange} ?disabled=${this.saving}>
+                      Wyniki wyszukiwania
+                      <div class="target-results">
                         ${visibleTargets.length === 0
-                          ? html`<option value="">Brak pasujacych encji</option>`
-                          : visibleTargets.map(
+                          ? html`<div class="meta">Brak pasujacych encji</div>`
+                          : visibleTargets.slice(0, 8).map(
                               (target) => html`
-                                <option value=${target.entityId}>
-                                  ${target.label} | ${target.entityId}
-                                </option>
+                                <button
+                                  type="button"
+                                  class="target-option ${this.draft.target.entityId === target.entityId ? "selected" : ""}"
+                                  @click=${() => this.applyTarget(target)}
+                                  ?disabled=${this.saving}
+                                >
+                                  <span>${target.label}</span>
+                                  <span class="meta">${target.entityId}</span>
+                                </button>
                               `
                             )}
-                      </select>
+                      </div>
                     </label>
                   </div>
 
@@ -1068,13 +1098,7 @@ export class ZsBetterSchedulerCard extends LitElement {
     this.draft = { ...this.draft, name: (event.target as HTMLInputElement).value };
   };
 
-  private handleTargetSelectionChange = (event: Event) => {
-    const entityId = (event.target as HTMLSelectElement).value;
-    const target = this.availableTargets.find((item) => item.entityId === entityId);
-    if (!target) {
-      return;
-    }
-
+  private applyTarget(target: SchedulerTargetRef) {
     const nextKind = getActionKindsForTarget(target)[0];
     this.draft = {
       ...this.draft,
@@ -1088,6 +1112,16 @@ export class ZsBetterSchedulerCard extends LitElement {
       durationMinutes: nextKind === "turn_on_for_duration" ? this.draft.durationMinutes ?? 30 : undefined
     };
     this.targetSearch = target.label;
+  }
+
+  private handleTargetSelectionChange = (event: Event) => {
+    const entityId = (event.target as HTMLSelectElement).value;
+    const target = this.availableTargets.find((item) => item.entityId === entityId);
+    if (!target) {
+      return;
+    }
+
+    this.applyTarget(target);
   };
 
   private handleTargetInput = (event: Event) => {
@@ -1107,7 +1141,7 @@ export class ZsBetterSchedulerCard extends LitElement {
     };
 
     if (knownTarget) {
-      this.targetSearch = knownTarget.label;
+      this.applyTarget(knownTarget);
     }
   };
 

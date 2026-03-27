@@ -727,19 +727,7 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
             if (!target) {
                 return;
             }
-            const nextKind = getActionKindsForTarget(target)[0];
-            this.draft = {
-                ...this.draft,
-                target,
-                action: {
-                    ...this.draft.action,
-                    kind: nextKind,
-                    label: getActionLabel(nextKind),
-                    service: nextKind === "custom_service" ? this.draft.action.service : undefined
-                },
-                durationMinutes: nextKind === "turn_on_for_duration" ? this.draft.durationMinutes ?? 30 : undefined
-            };
-            this.targetSearch = target.label;
+            this.applyTarget(target);
         };
         this.handleTargetInput = (event) => {
             const entityId = event.target.value.trim();
@@ -756,7 +744,7 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                 }
             };
             if (knownTarget) {
-                this.targetSearch = knownTarget.label;
+                this.applyTarget(knownTarget);
             }
         };
         this.handleTargetLabelInput = (event) => {
@@ -950,16 +938,22 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                       />
                     </label>
                     <label>
-                      Target
-                      <select .value=${this.draft.target.entityId} @change=${this.handleTargetSelectionChange} ?disabled=${this.saving}>
+                      Wyniki wyszukiwania
+                      <div class="target-results">
                         ${visibleTargets.length === 0
-            ? b `<option value="">Brak pasujacych encji</option>`
-            : visibleTargets.map((target) => b `
-                                <option value=${target.entityId}>
-                                  ${target.label} | ${target.entityId}
-                                </option>
+            ? b `<div class="meta">Brak pasujacych encji</div>`
+            : visibleTargets.slice(0, 8).map((target) => b `
+                                <button
+                                  type="button"
+                                  class="target-option ${this.draft.target.entityId === target.entityId ? "selected" : ""}"
+                                  @click=${() => this.applyTarget(target)}
+                                  ?disabled=${this.saving}
+                                >
+                                  <span>${target.label}</span>
+                                  <span class="meta">${target.entityId}</span>
+                                </button>
                               `)}
-                      </select>
+                      </div>
                     </label>
                   </div>
 
@@ -1415,6 +1409,21 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
             this.saving = false;
         }
     }
+    applyTarget(target) {
+        const nextKind = getActionKindsForTarget(target)[0];
+        this.draft = {
+            ...this.draft,
+            target,
+            action: {
+                ...this.draft.action,
+                kind: nextKind,
+                label: getActionLabel(nextKind),
+                service: nextKind === "custom_service" ? this.draft.action.service : undefined
+            },
+            durationMinutes: nextKind === "turn_on_for_duration" ? this.draft.durationMinutes ?? 30 : undefined
+        };
+        this.targetSearch = target.label;
+    }
     toggleWeekday(day) {
         const exists = this.draft.weekdays.includes(day);
         this.draft = {
@@ -1594,6 +1603,30 @@ ZsBetterSchedulerCard.styles = i$3 `
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
+    }
+
+    .target-results {
+      display: grid;
+      gap: 8px;
+      max-height: 220px;
+      overflow: auto;
+      padding: 4px 0;
+    }
+
+    .target-option {
+      display: grid;
+      gap: 2px;
+      padding: 10px 12px;
+      text-align: left;
+      border-radius: 12px;
+      background: rgba(24, 84, 62, 0.06);
+      color: var(--primary-text-color);
+      border: 1px solid rgba(127, 127, 127, 0.14);
+    }
+
+    .target-option.selected {
+      background: rgba(24, 84, 62, 0.14);
+      border-color: rgba(24, 84, 62, 0.28);
     }
 
     .stack {
