@@ -86,8 +86,23 @@ export type UiScheduleProjection =
       mode: "readonly";
       rawName: string;
       rawId?: string;
+      reasonCode:
+        | "no_timeslots"
+        | "unsupported_weekdays"
+        | "too_many_timeslots"
+        | "missing_required_fields"
+        | "multiple_actions"
+        | "incompatible_duration_pair"
+        | "invalid_duration";
       reason: string;
       rawSummary: string;
+      details: string[];
+      rawTimeslots: Array<{
+        start?: string;
+        stop?: string;
+        actions: string[];
+      }>;
+      suggestions: string[];
     };
 
 export type SchedulerBackendItem = {

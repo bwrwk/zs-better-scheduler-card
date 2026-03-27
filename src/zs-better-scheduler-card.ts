@@ -53,6 +53,8 @@ export class ZsBetterSchedulerCard extends LitElement {
   @state() private filterStatus: FilterStatus = "all";
   @state() private filterTag = "all";
   @state() private showReadonly = true;
+  @state() private targetSearch = "";
+  @state() private expandedReadonlyIds: string[] = [];
 
   private schedulerService?: SchedulerService;
   private unsubscribeUpdates?: () => Promise<void> | void;
@@ -171,6 +173,10 @@ export class ZsBetterSchedulerCard extends LitElement {
       border-color: rgba(158, 91, 0, 0.18);
     }
 
+    .row.readonly .summary {
+      color: #6f4100;
+    }
+
     .summary {
       font-weight: 600;
       line-height: 1.4;
@@ -211,6 +217,23 @@ export class ZsBetterSchedulerCard extends LitElement {
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 8px;
+    }
+
+    .readonly-box {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px dashed rgba(158, 91, 0, 0.24);
+    }
+
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.82rem;
     }
 
     .chip {
@@ -437,11 +460,20 @@ export class ZsBetterSchedulerCard extends LitElement {
 
                   <div class="field-grid two">
                     <label>
+                      Szukaj targetu
+                      <input
+                        .value=${this.targetSearch}
+                        @input=${this.handleTargetSearchInput}
+                        placeholder="szukaj po nazwie lub entity_id"
+                        ?disabled=${this.saving}
+                      />
+                    </label>
+                    <label>
                       Target
                       <select .value=${this.draft.target.entityId} @change=${this.handleTargetSelectionChange} ?disabled=${this.saving}>
-                        ${this.availableTargets.length === 0
-                          ? html`<option value="">Brak wykrytych encji</option>`
-                          : this.availableTargets.map(
+                        ${this.getFilteredTargets().length === 0
+                          ? html`<option value="">Brak pasujacych encji</option>`
+                          : this.getFilteredTargets().map(
                               (target) => html`
                                 <option value=${target.entityId}>
                                   ${target.label} | ${target.entityId}
@@ -450,17 +482,20 @@ export class ZsBetterSchedulerCard extends LitElement {
                             )}
                       </select>
                     </label>
-                    <label>
-                      Entity ID
-                      <input .value=${this.draft.target.entityId} @input=${this.handleTargetInput} ?disabled=${this.saving} />
-                    </label>
                   </div>
 
                   <div class="field-grid two">
                     <label>
+                      Entity ID / custom
+                      <input .value=${this.draft.target.entityId} @input=${this.handleTargetInput} ?disabled=${this.saving} />
+                    </label>
+                    <label>
                       Label
                       <input .value=${this.draft.target.label} @input=${this.handleTargetLabelInput} ?disabled=${this.saving} />
                     </label>
+                  </div>
+
+                  <div class="field-grid two">
                     <label>
                       Domena
                       <select .value=${this.draft.target.domain} @change=${this.handleDomainChange} ?disabled=${this.saving}>
@@ -622,6 +657,8 @@ export class ZsBetterSchedulerCard extends LitElement {
 
   private renderProjectionRow(projection: UiScheduleProjection) {
     if (projection.mode === "readonly") {
+      const readonlyKey = projection.rawId ?? projection.rawName;
+      const expanded = this.expandedReadonlyIds.includes(readonlyKey);
       return html`
         <article class="row readonly">
           <div class="row-top">
@@ -630,7 +667,50 @@ export class ZsBetterSchedulerCard extends LitElement {
           </div>
           <div class="meta">${projection.rawSummary}</div>
           <div class="warning">Powod: ${projection.reason}</div>
+          ${projection.suggestions.length ? html`<div class="meta">${projection.suggestions[0]}</div>` : nothing}
           ${projection.rawId ? html`<div class="meta">${projection.rawId}</div>` : nothing}
+          <div class="button-row">
+            <button class="ghost" @click=${() => this.toggleReadonlyDetails(readonlyKey)}>
+              ${expanded ? "Ukryj szczegoly" : "Pokaz szczegoly"}
+            </button>
+          </div>
+          ${expanded
+            ? html`
+                <div class="stack">
+                  ${projection.details.length
+                    ? html`
+                        <div class="readonly-box">
+                          <div class="summary">Detale</div>
+                          ${projection.details.map((detail) => html`<div class="meta">${detail}</div>`)}
+                        </div>
+                      `
+                    : nothing}
+                  ${projection.rawTimeslots.length
+                    ? html`
+                        <div class="readonly-box">
+                          <div class="summary">Timesloty backendu</div>
+                          ${projection.rawTimeslots.map(
+                            (slot) => html`
+                              <div class="meta mono">
+                                ${slot.start ?? "--:--"}${slot.stop ? ` -> ${slot.stop}` : ""} |
+                                ${slot.actions.join(" | ")}
+                              </div>
+                            `
+                          )}
+                        </div>
+                      `
+                    : nothing}
+                  ${projection.suggestions.length
+                    ? html`
+                        <div class="readonly-box">
+                          <div class="summary">Co dalej</div>
+                          ${projection.suggestions.map((suggestion) => html`<div class="meta">${suggestion}</div>`)}
+                        </div>
+                      `
+                    : nothing}
+                </div>
+              `
+            : nothing}
         </article>
       `;
     }
@@ -781,6 +861,20 @@ export class ZsBetterSchedulerCard extends LitElement {
 
   private getCurrentActionOptions(): SchedulerActionKind[] {
     return getActionKindsForTarget(this.draft.target);
+  }
+
+  private getFilteredTargets(): SchedulerTargetRef[] {
+    const query = this.targetSearch.trim().toLowerCase();
+    if (!query) {
+      return this.availableTargets;
+    }
+
+    return this.availableTargets.filter(
+      (target) =>
+        target.label.toLowerCase().includes(query) ||
+        target.entityId.toLowerCase().includes(query) ||
+        target.domain.toLowerCase().includes(query)
+    );
   }
 
   private getFilteredProjections(): UiScheduleProjection[] {
@@ -940,6 +1034,10 @@ export class ZsBetterSchedulerCard extends LitElement {
     this.showReadonly = (event.target as HTMLSelectElement).value === "show";
   };
 
+  private handleTargetSearchInput = (event: Event) => {
+    this.targetSearch = (event.target as HTMLInputElement).value;
+  };
+
   private handleNameInput = (event: Event) => {
     this.draft = { ...this.draft, name: (event.target as HTMLInputElement).value };
   };
@@ -963,6 +1061,7 @@ export class ZsBetterSchedulerCard extends LitElement {
       },
       durationMinutes: nextKind === "turn_on_for_duration" ? this.draft.durationMinutes ?? 30 : undefined
     };
+    this.targetSearch = target.label;
   };
 
   private handleTargetInput = (event: Event) => {
@@ -1082,6 +1181,12 @@ export class ZsBetterSchedulerCard extends LitElement {
   private handleNoteInput = (event: Event) => {
     this.draft = { ...this.draft, note: (event.target as HTMLTextAreaElement).value };
   };
+
+  private toggleReadonlyDetails(key: string) {
+    this.expandedReadonlyIds = this.expandedReadonlyIds.includes(key)
+      ? this.expandedReadonlyIds.filter((entry) => entry !== key)
+      : [...this.expandedReadonlyIds, key];
+  }
 }
 
 declare global {

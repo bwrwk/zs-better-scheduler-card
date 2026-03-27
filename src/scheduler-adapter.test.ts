@@ -71,4 +71,64 @@ describe("backendItemToProjection", () => {
     expect(projection.event.weekdays).toEqual(["tue", "wed"]);
     expect(projection.event.sourceMeta?.compatibility).toBe("derived");
   });
+
+  it("marks multi-slot schedules as readonly when they exceed the simple model", () => {
+    const item: SchedulerBackendItem = {
+      entity_id: "switch.schedule_complex",
+      name: "Complex schedule",
+      weekdays: ["mon", "wed"],
+      timeslots: [
+        {
+          start: "08:00",
+          actions: [{ entity_id: "light.salon", service: "light.turn_on" }]
+        },
+        {
+          start: "12:00",
+          actions: [{ entity_id: "light.salon", service: "light.turn_off" }]
+        },
+        {
+          start: "18:00",
+          actions: [{ entity_id: "light.salon", service: "light.turn_on" }]
+        }
+      ]
+    };
+
+    const projection = backendItemToProjection(item);
+
+    expect(projection.mode).toBe("readonly");
+    if (projection.mode !== "readonly") {
+      return;
+    }
+
+    expect(projection.reasonCode).toBe("too_many_timeslots");
+    expect(projection.rawTimeslots).toHaveLength(3);
+    expect(projection.suggestions[0]).toContain("bardziej zlozony");
+  });
+
+  it("marks schedules with multiple actions in one timeslot as readonly", () => {
+    const item: SchedulerBackendItem = {
+      entity_id: "switch.schedule_multi_action",
+      name: "Multi action",
+      weekdays: ["mon"],
+      timeslots: [
+        {
+          start: "10:00",
+          actions: [
+            { entity_id: "light.salon", service: "light.turn_on" },
+            { entity_id: "switch.tv", service: "switch.turn_on" }
+          ]
+        }
+      ]
+    };
+
+    const projection = backendItemToProjection(item);
+
+    expect(projection.mode).toBe("readonly");
+    if (projection.mode !== "readonly") {
+      return;
+    }
+
+    expect(projection.reasonCode).toBe("multiple_actions");
+    expect(projection.details[0]).toContain("2");
+  });
 });

@@ -12,6 +12,44 @@ import type {
   Weekday
 } from "./types";
 
+function getRawTimeslotSummary(item: SchedulerBackendItem) {
+  return (item.timeslots ?? []).map((slot) => ({
+    start: slot.start,
+    stop: slot.stop,
+    actions: (slot.actions ?? []).map((action) =>
+      [action.service ?? "unknown service", action.entity_id ?? "unknown entity"].join(" -> ")
+    )
+  }));
+}
+
+function makeReadonlyProjection(
+  item: SchedulerBackendItem,
+  reasonCode:
+    | "no_timeslots"
+    | "unsupported_weekdays"
+    | "too_many_timeslots"
+    | "missing_required_fields"
+    | "multiple_actions"
+    | "incompatible_duration_pair"
+    | "invalid_duration",
+  reason: string,
+  rawSummary: string,
+  details: string[] = [],
+  suggestions: string[] = []
+): UiScheduleProjection {
+  return {
+    mode: "readonly",
+    rawName: item.name ?? "Unknown schedule",
+    rawId: item.entity_id,
+    reasonCode,
+    reason,
+    rawSummary,
+    details,
+    rawTimeslots: getRawTimeslotSummary(item),
+    suggestions
+  };
+}
+
 function mapConditions(conditions?: UiScheduleCondition[]): SchedulerConditionPayload[] | undefined {
   if (!conditions?.length) {
     return undefined;
@@ -190,56 +228,65 @@ export function backendItemToProjection(item: SchedulerBackendItem): UiScheduleP
   const weekdays = asWeekdays(item.weekdays);
 
   if (!timeslots.length) {
-    return {
-      mode: "readonly",
-      rawName: item.name ?? "Unknown schedule",
-      rawId: item.entity_id,
-      reason: "Brak timeslotow",
-      rawSummary: "Harmonogram nie zawiera zadnych timeslotow."
-    };
+    return makeReadonlyProjection(
+      item,
+      "no_timeslots",
+      "Brak timeslotow",
+      "Harmonogram nie zawiera zadnych timeslotow.",
+      ["Ten wpis nie ma zadnego momentu startu do pokazania w prostym modelu eventu."],
+      ["Sprawdz wpis w oryginalnym schedulerze lub utworz go ponownie w tej karcie."]
+    );
   }
 
   if (!weekdays.length) {
-    return {
-      mode: "readonly",
-      rawName: item.name ?? "Unknown schedule",
-      rawId: item.entity_id,
-      reason: "Nietypowe dni",
-      rawSummary: "Ten harmonogram uzywa dni spoza prostego modelu UI."
-    };
+    return makeReadonlyProjection(
+      item,
+      "unsupported_weekdays",
+      "Nietypowe dni",
+      "Ten harmonogram uzywa dni spoza prostego modelu UI.",
+      [`Odebrane dni: ${(item.weekdays ?? []).join(", ") || "brak"}`],
+      ["Obecna karta wspiera tylko mon-sun w prostym modelu event-first."]
+    );
   }
 
   if (timeslots.length > 2) {
-    return {
-      mode: "readonly",
-      rawName: item.name ?? "Unknown schedule",
-      rawId: item.entity_id,
-      reason: "Za duzo timeslotow",
-      rawSummary: "MVP obsluguje tylko pojedynczy event lub pare start/stop."
-    };
+    return makeReadonlyProjection(
+      item,
+      "too_many_timeslots",
+      "Za duzo timeslotow",
+      "MVP obsluguje tylko pojedynczy event lub pare start/stop.",
+      [`Liczba timeslotow: ${timeslots.length}`],
+      ["Ten wpis wyglada na bardziej zlozony scenariusz niz prosty event."]
+    );
   }
 
   const first = timeslots[0];
   const firstAction = first.actions?.[0];
 
   if (!first.start || !firstAction?.service || !firstAction.entity_id) {
-    return {
-      mode: "readonly",
-      rawName: item.name ?? "Unknown schedule",
-      rawId: item.entity_id,
-      reason: "Brak wymaganych pol",
-      rawSummary: "Timeslot nie ma kompletnego start/service/entity_id."
-    };
+    return makeReadonlyProjection(
+      item,
+      "missing_required_fields",
+      "Brak wymaganych pol",
+      "Timeslot nie ma kompletnego start/service/entity_id.",
+      [
+        `start: ${first.start ?? "brak"}`,
+        `service: ${firstAction?.service ?? "brak"}`,
+        `entity_id: ${firstAction?.entity_id ?? "brak"}`
+      ],
+      ["UI event-first wymaga jednoznacznego startu, uslugi i targetu."]
+    );
   }
 
   if ((first.actions?.length ?? 0) !== 1) {
-    return {
-      mode: "readonly",
-      rawName: item.name ?? "Unknown schedule",
-      rawId: item.entity_id,
-      reason: "Wiele akcji",
-      rawSummary: "MVP nie edytuje harmonogramow z wieloma akcjami w jednym timeslocie."
-    };
+    return makeReadonlyProjection(
+      item,
+      "multiple_actions",
+      "Wiele akcji",
+      "MVP nie edytuje harmonogramow z wieloma akcjami w jednym timeslocie.",
+      [`Liczba akcji w pierwszym timeslocie: ${first.actions?.length ?? 0}`],
+      ["Rozwaz rozbicie tego wpisu na prostsze harmonogramy lub skrypt."]
+    );
   }
 
   if (timeslots.length === 2) {
@@ -255,25 +302,32 @@ export function backendItemToProjection(item: SchedulerBackendItem): UiScheduleP
       !secondAction.service.endsWith(".turn_off") ||
       !sameConditions(first.conditions, second.conditions)
     ) {
-      return {
-        mode: "readonly",
-        rawName: item.name ?? "Unknown schedule",
-        rawId: item.entity_id,
-        reason: "Niekompatybilna para start/stop",
-        rawSummary: "Nie udalo sie bezpiecznie rozpoznac jednego eventu z duration."
-      };
+      return makeReadonlyProjection(
+        item,
+        "incompatible_duration_pair",
+        "Niekompatybilna para start/stop",
+        "Nie udalo sie bezpiecznie rozpoznac jednego eventu z duration.",
+        [
+          `Start entity: ${firstAction.entity_id}`,
+          `Stop entity: ${secondAction?.entity_id ?? "brak"}`,
+          `Start service: ${firstAction.service}`,
+          `Stop service: ${secondAction?.service ?? "brak"}`
+        ],
+        ["Para start/stop nie spelnia prostego wzorca jednego eventu 'na czas'."]
+      );
     }
 
     const durationMinutes = parseTimeToMinutes(second.start) - parseTimeToMinutes(first.start);
 
     if (durationMinutes < 1) {
-      return {
-        mode: "readonly",
-        rawName: item.name ?? "Unknown schedule",
-        rawId: item.entity_id,
-        reason: "Nieprawidlowe duration",
-        rawSummary: "Duration nie miesci sie w prostym modelu MVP."
-      };
+      return makeReadonlyProjection(
+        item,
+        "invalid_duration",
+        "Nieprawidlowe duration",
+        "Duration nie miesci sie w prostym modelu MVP.",
+        [`start: ${first.start}`, `stop: ${second.start}`, `wyliczone duration: ${durationMinutes}`],
+        ["Obecna karta nie wspiera duration rownego 0, ujemnego ani przechodzacego przez polnoc."]
+      );
     }
 
     const domain = firstAction.entity_id.split(".")[0] ?? "unknown";

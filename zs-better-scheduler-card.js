@@ -164,6 +164,26 @@ function addMinutesToTime(value, minutesToAdd) {
     };
 }
 
+function getRawTimeslotSummary(item) {
+    return (item.timeslots ?? []).map((slot) => ({
+        start: slot.start,
+        stop: slot.stop,
+        actions: (slot.actions ?? []).map((action) => [action.service ?? "unknown service", action.entity_id ?? "unknown entity"].join(" -> "))
+    }));
+}
+function makeReadonlyProjection(item, reasonCode, reason, rawSummary, details = [], suggestions = []) {
+    return {
+        mode: "readonly",
+        rawName: item.name ?? "Unknown schedule",
+        rawId: item.entity_id,
+        reasonCode,
+        reason,
+        rawSummary,
+        details,
+        rawTimeslots: getRawTimeslotSummary(item),
+        suggestions
+    };
+}
 function mapConditions(conditions) {
     if (!conditions?.length) {
         return undefined;
@@ -312,51 +332,25 @@ function backendItemToProjection(item) {
     const timeslots = item.timeslots ?? [];
     const weekdays = asWeekdays(item.weekdays);
     if (!timeslots.length) {
-        return {
-            mode: "readonly",
-            rawName: item.name ?? "Unknown schedule",
-            rawId: item.entity_id,
-            reason: "Brak timeslotow",
-            rawSummary: "Harmonogram nie zawiera zadnych timeslotow."
-        };
+        return makeReadonlyProjection(item, "no_timeslots", "Brak timeslotow", "Harmonogram nie zawiera zadnych timeslotow.", ["Ten wpis nie ma zadnego momentu startu do pokazania w prostym modelu eventu."], ["Sprawdz wpis w oryginalnym schedulerze lub utworz go ponownie w tej karcie."]);
     }
     if (!weekdays.length) {
-        return {
-            mode: "readonly",
-            rawName: item.name ?? "Unknown schedule",
-            rawId: item.entity_id,
-            reason: "Nietypowe dni",
-            rawSummary: "Ten harmonogram uzywa dni spoza prostego modelu UI."
-        };
+        return makeReadonlyProjection(item, "unsupported_weekdays", "Nietypowe dni", "Ten harmonogram uzywa dni spoza prostego modelu UI.", [`Odebrane dni: ${(item.weekdays ?? []).join(", ") || "brak"}`], ["Obecna karta wspiera tylko mon-sun w prostym modelu event-first."]);
     }
     if (timeslots.length > 2) {
-        return {
-            mode: "readonly",
-            rawName: item.name ?? "Unknown schedule",
-            rawId: item.entity_id,
-            reason: "Za duzo timeslotow",
-            rawSummary: "MVP obsluguje tylko pojedynczy event lub pare start/stop."
-        };
+        return makeReadonlyProjection(item, "too_many_timeslots", "Za duzo timeslotow", "MVP obsluguje tylko pojedynczy event lub pare start/stop.", [`Liczba timeslotow: ${timeslots.length}`], ["Ten wpis wyglada na bardziej zlozony scenariusz niz prosty event."]);
     }
     const first = timeslots[0];
     const firstAction = first.actions?.[0];
     if (!first.start || !firstAction?.service || !firstAction.entity_id) {
-        return {
-            mode: "readonly",
-            rawName: item.name ?? "Unknown schedule",
-            rawId: item.entity_id,
-            reason: "Brak wymaganych pol",
-            rawSummary: "Timeslot nie ma kompletnego start/service/entity_id."
-        };
+        return makeReadonlyProjection(item, "missing_required_fields", "Brak wymaganych pol", "Timeslot nie ma kompletnego start/service/entity_id.", [
+            `start: ${first.start ?? "brak"}`,
+            `service: ${firstAction?.service ?? "brak"}`,
+            `entity_id: ${firstAction?.entity_id ?? "brak"}`
+        ], ["UI event-first wymaga jednoznacznego startu, uslugi i targetu."]);
     }
     if ((first.actions?.length ?? 0) !== 1) {
-        return {
-            mode: "readonly",
-            rawName: item.name ?? "Unknown schedule",
-            rawId: item.entity_id,
-            reason: "Wiele akcji",
-            rawSummary: "MVP nie edytuje harmonogramow z wieloma akcjami w jednym timeslocie."
-        };
+        return makeReadonlyProjection(item, "multiple_actions", "Wiele akcji", "MVP nie edytuje harmonogramow z wieloma akcjami w jednym timeslocie.", [`Liczba akcji w pierwszym timeslocie: ${first.actions?.length ?? 0}`], ["Rozwaz rozbicie tego wpisu na prostsze harmonogramy lub skrypt."]);
     }
     if (timeslots.length === 2) {
         const second = timeslots[1];
@@ -368,23 +362,16 @@ function backendItemToProjection(item) {
             !firstAction.service.endsWith(".turn_on") ||
             !secondAction.service.endsWith(".turn_off") ||
             !sameConditions(first.conditions, second.conditions)) {
-            return {
-                mode: "readonly",
-                rawName: item.name ?? "Unknown schedule",
-                rawId: item.entity_id,
-                reason: "Niekompatybilna para start/stop",
-                rawSummary: "Nie udalo sie bezpiecznie rozpoznac jednego eventu z duration."
-            };
+            return makeReadonlyProjection(item, "incompatible_duration_pair", "Niekompatybilna para start/stop", "Nie udalo sie bezpiecznie rozpoznac jednego eventu z duration.", [
+                `Start entity: ${firstAction.entity_id}`,
+                `Stop entity: ${secondAction?.entity_id ?? "brak"}`,
+                `Start service: ${firstAction.service}`,
+                `Stop service: ${secondAction?.service ?? "brak"}`
+            ], ["Para start/stop nie spelnia prostego wzorca jednego eventu 'na czas'."]);
         }
         const durationMinutes = parseTimeToMinutes(second.start) - parseTimeToMinutes(first.start);
         if (durationMinutes < 1) {
-            return {
-                mode: "readonly",
-                rawName: item.name ?? "Unknown schedule",
-                rawId: item.entity_id,
-                reason: "Nieprawidlowe duration",
-                rawSummary: "Duration nie miesci sie w prostym modelu MVP."
-            };
+            return makeReadonlyProjection(item, "invalid_duration", "Nieprawidlowe duration", "Duration nie miesci sie w prostym modelu MVP.", [`start: ${first.start}`, `stop: ${second.start}`, `wyliczone duration: ${durationMinutes}`], ["Obecna karta nie wspiera duration rownego 0, ujemnego ani przechodzacego przez polnoc."]);
         }
         const domain = firstAction.entity_id.split(".")[0] ?? "unknown";
         return {
@@ -658,6 +645,8 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
         this.filterStatus = "all";
         this.filterTag = "all";
         this.showReadonly = true;
+        this.targetSearch = "";
+        this.expandedReadonlyIds = [];
         this.isInitializedForHass = false;
         this.handleCreateNew = () => {
             this.editingId = null;
@@ -726,6 +715,9 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
         this.handleReadonlyFilterChange = (event) => {
             this.showReadonly = event.target.value === "show";
         };
+        this.handleTargetSearchInput = (event) => {
+            this.targetSearch = event.target.value;
+        };
         this.handleNameInput = (event) => {
             this.draft = { ...this.draft, name: event.target.value };
         };
@@ -747,6 +739,7 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                 },
                 durationMinutes: nextKind === "turn_on_for_duration" ? this.draft.durationMinutes ?? 30 : undefined
             };
+            this.targetSearch = target.label;
         };
         this.handleTargetInput = (event) => {
             const entityId = event.target.value.trim();
@@ -942,28 +935,40 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
 
                   <div class="field-grid two">
                     <label>
+                      Szukaj targetu
+                      <input
+                        .value=${this.targetSearch}
+                        @input=${this.handleTargetSearchInput}
+                        placeholder="szukaj po nazwie lub entity_id"
+                        ?disabled=${this.saving}
+                      />
+                    </label>
+                    <label>
                       Target
                       <select .value=${this.draft.target.entityId} @change=${this.handleTargetSelectionChange} ?disabled=${this.saving}>
-                        ${this.availableTargets.length === 0
-            ? b `<option value="">Brak wykrytych encji</option>`
-            : this.availableTargets.map((target) => b `
+                        ${this.getFilteredTargets().length === 0
+            ? b `<option value="">Brak pasujacych encji</option>`
+            : this.getFilteredTargets().map((target) => b `
                                 <option value=${target.entityId}>
                                   ${target.label} | ${target.entityId}
                                 </option>
                               `)}
                       </select>
                     </label>
-                    <label>
-                      Entity ID
-                      <input .value=${this.draft.target.entityId} @input=${this.handleTargetInput} ?disabled=${this.saving} />
-                    </label>
                   </div>
 
                   <div class="field-grid two">
                     <label>
+                      Entity ID / custom
+                      <input .value=${this.draft.target.entityId} @input=${this.handleTargetInput} ?disabled=${this.saving} />
+                    </label>
+                    <label>
                       Label
                       <input .value=${this.draft.target.label} @input=${this.handleTargetLabelInput} ?disabled=${this.saving} />
                     </label>
+                  </div>
+
+                  <div class="field-grid two">
                     <label>
                       Domena
                       <select .value=${this.draft.target.domain} @change=${this.handleDomainChange} ?disabled=${this.saving}>
@@ -1118,6 +1123,8 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
     }
     renderProjectionRow(projection) {
         if (projection.mode === "readonly") {
+            const readonlyKey = projection.rawId ?? projection.rawName;
+            const expanded = this.expandedReadonlyIds.includes(readonlyKey);
             return b `
         <article class="row readonly">
           <div class="row-top">
@@ -1126,7 +1133,48 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
           </div>
           <div class="meta">${projection.rawSummary}</div>
           <div class="warning">Powod: ${projection.reason}</div>
+          ${projection.suggestions.length ? b `<div class="meta">${projection.suggestions[0]}</div>` : A}
           ${projection.rawId ? b `<div class="meta">${projection.rawId}</div>` : A}
+          <div class="button-row">
+            <button class="ghost" @click=${() => this.toggleReadonlyDetails(readonlyKey)}>
+              ${expanded ? "Ukryj szczegoly" : "Pokaz szczegoly"}
+            </button>
+          </div>
+          ${expanded
+                ? b `
+                <div class="stack">
+                  ${projection.details.length
+                    ? b `
+                        <div class="readonly-box">
+                          <div class="summary">Detale</div>
+                          ${projection.details.map((detail) => b `<div class="meta">${detail}</div>`)}
+                        </div>
+                      `
+                    : A}
+                  ${projection.rawTimeslots.length
+                    ? b `
+                        <div class="readonly-box">
+                          <div class="summary">Timesloty backendu</div>
+                          ${projection.rawTimeslots.map((slot) => b `
+                              <div class="meta mono">
+                                ${slot.start ?? "--:--"}${slot.stop ? ` -> ${slot.stop}` : ""} |
+                                ${slot.actions.join(" | ")}
+                              </div>
+                            `)}
+                        </div>
+                      `
+                    : A}
+                  ${projection.suggestions.length
+                    ? b `
+                        <div class="readonly-box">
+                          <div class="summary">Co dalej</div>
+                          ${projection.suggestions.map((suggestion) => b `<div class="meta">${suggestion}</div>`)}
+                        </div>
+                      `
+                    : A}
+                </div>
+              `
+                : A}
         </article>
       `;
         }
@@ -1260,6 +1308,15 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
     getCurrentActionOptions() {
         return getActionKindsForTarget(this.draft.target);
     }
+    getFilteredTargets() {
+        const query = this.targetSearch.trim().toLowerCase();
+        if (!query) {
+            return this.availableTargets;
+        }
+        return this.availableTargets.filter((target) => target.label.toLowerCase().includes(query) ||
+            target.entityId.toLowerCase().includes(query) ||
+            target.domain.toLowerCase().includes(query));
+    }
     getFilteredProjections() {
         return this.projections.filter((projection) => {
             if (projection.mode === "readonly") {
@@ -1345,6 +1402,11 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
             ...this.draft,
             tags: [...this.draft.tags, tag]
         };
+    }
+    toggleReadonlyDetails(key) {
+        this.expandedReadonlyIds = this.expandedReadonlyIds.includes(key)
+            ? this.expandedReadonlyIds.filter((entry) => entry !== key)
+            : [...this.expandedReadonlyIds, key];
     }
 };
 ZsBetterSchedulerCard.styles = i$3 `
@@ -1460,6 +1522,10 @@ ZsBetterSchedulerCard.styles = i$3 `
       border-color: rgba(158, 91, 0, 0.18);
     }
 
+    .row.readonly .summary {
+      color: #6f4100;
+    }
+
     .summary {
       font-weight: 600;
       line-height: 1.4;
@@ -1500,6 +1566,23 @@ ZsBetterSchedulerCard.styles = i$3 `
       display: flex;
       flex-wrap: wrap;
       gap: 6px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 8px;
+    }
+
+    .readonly-box {
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.72);
+      border: 1px dashed rgba(158, 91, 0, 0.24);
+    }
+
+    .mono {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.82rem;
     }
 
     .chip {
@@ -1656,6 +1739,12 @@ __decorate([
 __decorate([
     r()
 ], ZsBetterSchedulerCard.prototype, "showReadonly", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "targetSearch", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "expandedReadonlyIds", void 0);
 ZsBetterSchedulerCard = __decorate([
     t("zs-better-scheduler-card")
 ], ZsBetterSchedulerCard);

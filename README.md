@@ -34,6 +34,7 @@ Glowny dokument projektowy:
 
 - [docs/architecture.md](C:\Users\User\Codex\Karty ha\zs-better-scheduler-card\docs\architecture.md)
 - [docs/next-steps.md](C:\Users\User\Codex\Karty ha\zs-better-scheduler-card\docs\next-steps.md)
+- [docs/backend-limitations.md](C:\Users\User\Codex\Karty ha\zs-better-scheduler-card\docs\backend-limitations.md)
 
 ## Zakladany kierunek implementacji
 
