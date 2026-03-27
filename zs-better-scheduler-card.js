@@ -176,29 +176,33 @@ function mapConditions(conditions) {
 }
 function buildActionPayload(event, kindOverride) {
     const effectiveKind = kindOverride ?? event.action.kind;
+    const { domain, entityId } = event.target;
     switch (effectiveKind) {
         case "turn_on":
-            return { entity_id: event.target.entityId, service: `${event.target.domain}.turn_on` };
+            return { entity_id: entityId, service: `${domain}.turn_on` };
         case "turn_off":
-            return { entity_id: event.target.entityId, service: `${event.target.domain}.turn_off` };
+            return { entity_id: entityId, service: `${domain}.turn_off` };
         case "turn_on_for_duration":
             return {
-                entity_id: event.target.entityId,
-                service: `${event.target.domain}.turn_on`,
+                entity_id: entityId,
+                service: `${domain}.turn_on`,
                 service_data: event.action.serviceData
             };
         case "run":
-            return { entity_id: event.target.entityId, service: `${event.target.domain}.turn_on` };
+            if (domain === "automation") {
+                return { entity_id: entityId, service: "automation.trigger", service_data: event.action.serviceData };
+            }
+            return { entity_id: entityId, service: `${domain}.turn_on`, service_data: event.action.serviceData };
         case "activate":
-            return { entity_id: event.target.entityId, service: `${event.target.domain}.turn_on` };
+            return { entity_id: entityId, service: `${domain}.turn_on`, service_data: event.action.serviceData };
         case "custom_service":
             return {
-                entity_id: event.target.entityId,
-                service: event.action.service ?? `${event.target.domain}.turn_on`,
+                entity_id: entityId,
+                service: event.action.service ?? `${domain}.turn_on`,
                 service_data: event.action.serviceData
             };
         default:
-            return { entity_id: event.target.entityId, service: `${event.target.domain}.turn_on` };
+            return { entity_id: entityId, service: `${domain}.turn_on` };
     }
 }
 function supportsDuration(event) {
@@ -267,6 +271,262 @@ function eventToAddPayload(event) {
         enabled: event.enabled
     };
 }
+function eventToEditPayload(event) {
+    if (!event.sourceMeta?.backendScheduleId) {
+        throw new Error("Brak backendScheduleId dla edycji wpisu.");
+    }
+    return {
+        entity_id: event.sourceMeta.backendScheduleId,
+        ...eventToAddPayload(event)
+    };
+}
+function sameConditions(left, right) {
+    return JSON.stringify(left ?? []) === JSON.stringify(right ?? []);
+}
+function asWeekdays(days) {
+    const supported = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    return (days ?? []).filter((day) => supported.includes(day));
+}
+function actionLabelForService(service, durationMinutes) {
+    if (service === "automation.trigger") {
+        return "Uruchom";
+    }
+    if (service.endsWith(".turn_off")) {
+        return "Wylacz";
+    }
+    if (durationMinutes) {
+        return `Wlacz na ${durationMinutes} min`;
+    }
+    if (service.startsWith("script.")) {
+        return "Uruchom";
+    }
+    if (service.startsWith("scene.")) {
+        return "Aktywuj";
+    }
+    return "Wlacz";
+}
+function backendItemToProjection(item) {
+    const timeslots = item.timeslots ?? [];
+    const weekdays = asWeekdays(item.weekdays);
+    if (!timeslots.length) {
+        return {
+            mode: "readonly",
+            rawName: item.name ?? "Unknown schedule",
+            rawId: item.entity_id,
+            reason: "Brak timeslotow",
+            rawSummary: "Harmonogram nie zawiera zadnych timeslotow."
+        };
+    }
+    if (!weekdays.length) {
+        return {
+            mode: "readonly",
+            rawName: item.name ?? "Unknown schedule",
+            rawId: item.entity_id,
+            reason: "Nietypowe dni",
+            rawSummary: "Ten harmonogram uzywa dni spoza prostego modelu UI."
+        };
+    }
+    if (timeslots.length > 2) {
+        return {
+            mode: "readonly",
+            rawName: item.name ?? "Unknown schedule",
+            rawId: item.entity_id,
+            reason: "Za duzo timeslotow",
+            rawSummary: "MVP obsluguje tylko pojedynczy event lub pare start/stop."
+        };
+    }
+    const first = timeslots[0];
+    const firstAction = first.actions?.[0];
+    if (!first.start || !firstAction?.service || !firstAction.entity_id) {
+        return {
+            mode: "readonly",
+            rawName: item.name ?? "Unknown schedule",
+            rawId: item.entity_id,
+            reason: "Brak wymaganych pol",
+            rawSummary: "Timeslot nie ma kompletnego start/service/entity_id."
+        };
+    }
+    if ((first.actions?.length ?? 0) !== 1) {
+        return {
+            mode: "readonly",
+            rawName: item.name ?? "Unknown schedule",
+            rawId: item.entity_id,
+            reason: "Wiele akcji",
+            rawSummary: "MVP nie edytuje harmonogramow z wieloma akcjami w jednym timeslocie."
+        };
+    }
+    if (timeslots.length === 2) {
+        const second = timeslots[1];
+        const secondAction = second.actions?.[0];
+        if (!second.start ||
+            !secondAction?.service ||
+            !secondAction.entity_id ||
+            secondAction.entity_id !== firstAction.entity_id ||
+            !firstAction.service.endsWith(".turn_on") ||
+            !secondAction.service.endsWith(".turn_off") ||
+            !sameConditions(first.conditions, second.conditions)) {
+            return {
+                mode: "readonly",
+                rawName: item.name ?? "Unknown schedule",
+                rawId: item.entity_id,
+                reason: "Niekompatybilna para start/stop",
+                rawSummary: "Nie udalo sie bezpiecznie rozpoznac jednego eventu z duration."
+            };
+        }
+        const durationMinutes = parseTimeToMinutes(second.start) - parseTimeToMinutes(first.start);
+        if (durationMinutes < 1) {
+            return {
+                mode: "readonly",
+                rawName: item.name ?? "Unknown schedule",
+                rawId: item.entity_id,
+                reason: "Nieprawidlowe duration",
+                rawSummary: "Duration nie miesci sie w prostym modelu MVP."
+            };
+        }
+        const domain = firstAction.entity_id.split(".")[0] ?? "unknown";
+        return {
+            mode: "editable",
+            warnings: ["Duration jest wyprowadzone z pary start/stop w backendzie."],
+            event: {
+                id: item.schedule_id ?? item.entity_id ?? `${item.name ?? "schedule"}-derived`,
+                name: item.name ?? "Schedule",
+                enabled: item.enabled ?? true,
+                weekdays,
+                startTime: first.start,
+                durationMinutes,
+                target: {
+                    entityId: firstAction.entity_id,
+                    domain,
+                    label: firstAction.entity_id
+                },
+                action: {
+                    kind: "turn_on_for_duration",
+                    label: actionLabelForService(firstAction.service, durationMinutes),
+                    serviceData: firstAction.service_data
+                },
+                tags: item.tags ?? [],
+                conditions: first.conditions?.map((condition) => ({
+                    entityId: condition.entity_id ?? "",
+                    value: condition.value ?? "",
+                    matchType: (condition.match_type ?? "is")
+                })),
+                sourceMeta: {
+                    backendScheduleId: item.entity_id,
+                    compatibility: "derived"
+                }
+            }
+        };
+    }
+    const domain = firstAction.entity_id.split(".")[0] ?? "unknown";
+    const service = firstAction.service;
+    let actionKind = "custom_service";
+    if (service === "automation.trigger") {
+        actionKind = "run";
+    }
+    else if (service.endsWith(".turn_on")) {
+        actionKind = domain === "script" ? "run" : domain === "scene" ? "activate" : "turn_on";
+    }
+    else if (service.endsWith(".turn_off")) {
+        actionKind = "turn_off";
+    }
+    return {
+        mode: "editable",
+        warnings: [],
+        event: {
+            id: item.schedule_id ?? item.entity_id ?? `${item.name ?? "schedule"}-native`,
+            name: item.name ?? "Schedule",
+            enabled: item.enabled ?? true,
+            weekdays,
+            startTime: first.start,
+            target: {
+                entityId: firstAction.entity_id,
+                domain,
+                label: firstAction.entity_id
+            },
+            action: {
+                kind: actionKind,
+                label: actionLabelForService(service),
+                service: actionKind === "custom_service" ? service : undefined,
+                serviceData: firstAction.service_data
+            },
+            tags: item.tags ?? [],
+            conditions: first.conditions?.map((condition) => ({
+                entityId: condition.entity_id ?? "",
+                value: condition.value ?? "",
+                matchType: (condition.match_type ?? "is")
+            })),
+            sourceMeta: {
+                backendScheduleId: item.entity_id,
+                compatibility: "native"
+            }
+        }
+    };
+}
+
+class SchedulerService {
+    constructor(hass) {
+        this.hass = hass;
+    }
+    async fetchSchedules() {
+        const response = await this.hass.callWS({ type: "scheduler" });
+        const baseItems = Array.isArray(response) ? response : response.schedules ?? [];
+        const detailedItems = await Promise.all(baseItems.map(async (item) => {
+            const scheduleRef = item.schedule_id ?? item.entity_id;
+            if (!scheduleRef) {
+                return item;
+            }
+            try {
+                return await this.hass.callWS({
+                    type: "scheduler/item",
+                    schedule_id: item.schedule_id,
+                    entity_id: item.entity_id ?? scheduleRef
+                });
+            }
+            catch {
+                return item;
+            }
+        }));
+        return detailedItems;
+    }
+    async fetchTags() {
+        try {
+            const tags = await this.hass.callWS({ type: "scheduler/tags" });
+            return Array.isArray(tags) ? tags : tags.tags ?? [];
+        }
+        catch {
+            return [];
+        }
+    }
+    async createSchedule(payload) {
+        await this.hass.callApi("POST", "scheduler/add", payload);
+    }
+    async editSchedule(payload) {
+        await this.hass.callApi("POST", "scheduler/edit", payload);
+    }
+    async removeSchedule(entityId) {
+        await this.hass.callApi("POST", "scheduler/remove", { entity_id: entityId });
+    }
+    async setScheduleEnabled(entityId, enabled) {
+        await this.hass.callService("switch", enabled ? "turn_on" : "turn_off", {
+            entity_id: entityId
+        });
+    }
+    async subscribeToUpdates(callback) {
+        if (!this.hass.connection?.subscribeMessage) {
+            return () => undefined;
+        }
+        return this.hass.connection.subscribeMessage(callback, { type: "scheduler_updated" });
+    }
+}
+
+async function loadSchedulerSnapshot(service) {
+    const [items, tags] = await Promise.all([service.fetchSchedules(), service.fetchTags()]);
+    return {
+        items,
+        projections: items.map((item) => backendItemToProjection(item)),
+        tags
+    };
+}
 
 const WEEKDAY_LABELS = {
     mon: "Pn",
@@ -305,6 +565,66 @@ function formatEventSummary(event) {
     return `${formatWeekdays(event.weekdays)} ${event.startTime} | ${event.target.label} | ${formatActionSummary(event)}`;
 }
 
+const SUPPORTED_TARGET_DOMAINS = [
+    "light",
+    "switch",
+    "script",
+    "automation",
+    "scene",
+    "input_boolean"
+];
+const ACTION_OPTIONS = {
+    light: ["turn_on", "turn_off", "turn_on_for_duration"],
+    switch: ["turn_on", "turn_off", "turn_on_for_duration"],
+    input_boolean: ["turn_on", "turn_off", "turn_on_for_duration"],
+    script: ["run"],
+    automation: ["run", "turn_on", "turn_off"],
+    scene: ["activate"]
+};
+function isSupportedTargetDomain(domain) {
+    return SUPPORTED_TARGET_DOMAINS.includes(domain);
+}
+function getActionOptionsForDomain(domain) {
+    if (!isSupportedTargetDomain(domain)) {
+        return ["custom_service"];
+    }
+    return ACTION_OPTIONS[domain];
+}
+function getActionLabel(kind) {
+    switch (kind) {
+        case "turn_on":
+            return "Wlacz";
+        case "turn_off":
+            return "Wylacz";
+        case "turn_on_for_duration":
+            return "Wlacz na czas";
+        case "run":
+            return "Uruchom";
+        case "activate":
+            return "Aktywuj";
+        case "custom_service":
+            return "Custom service";
+        default:
+            return kind;
+    }
+}
+function getActionKindsForTarget(target) {
+    return getActionOptionsForDomain(target.domain);
+}
+function buildTargetOptions(states) {
+    return Object.values(states)
+        .filter((state) => isSupportedTargetDomain(state.entity_id.split(".")[0] ?? ""))
+        .map((state) => {
+        const domain = state.entity_id.split(".")[0] ?? "";
+        return {
+            entityId: state.entity_id,
+            domain,
+            label: String(state.attributes.friendly_name ?? state.entity_id)
+        };
+    })
+        .sort((left, right) => left.label.localeCompare(right.label, "pl"));
+}
+
 const WEEKDAYS = [
     { key: "mon", label: "Pn" },
     { key: "tue", label: "Wt" },
@@ -314,103 +634,176 @@ const WEEKDAYS = [
     { key: "sat", label: "Sb" },
     { key: "sun", label: "Nd" }
 ];
+const DEMO_PROJECTIONS = DEMO_EVENTS.map((event) => ({
+    mode: "editable",
+    event,
+    warnings: ["Tryb demo: karta nie jest jeszcze podpieta do Home Assistanta."]
+}));
 let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
     constructor() {
         super(...arguments);
-        this.events = DEMO_EVENTS;
+        this.projections = DEMO_PROJECTIONS;
+        this.availableTags = [];
+        this.availableTargets = [];
         this.draft = this.createEmptyDraft();
         this.editingId = null;
+        this.loading = false;
+        this.saving = false;
+        this.error = "";
+        this.notice = "Tryb demo: karta czeka na obiekt hass.";
+        this.filterSearch = "";
+        this.filterStatus = "all";
+        this.filterTag = "all";
+        this.showReadonly = true;
+        this.isInitializedForHass = false;
         this.handleCreateNew = () => {
             this.editingId = null;
             this.draft = this.createEmptyDraft();
+            this.notice = "Tworzenie nowego harmonogramu.";
         };
         this.handleResetEditor = () => {
             if (!this.editingId) {
                 this.draft = this.createEmptyDraft();
                 return;
             }
-            const current = this.events.find((event) => event.id === this.editingId);
+            const current = this.projections
+                .filter((projection) => projection.mode === "editable")
+                .find((projection) => projection.event.id === this.editingId);
             if (current) {
-                this.draft = structuredClone(current);
+                this.draft = structuredClone(current.event);
             }
         };
-        this.handleSave = () => {
+        this.handleDeleteCurrent = async () => {
+            const current = this.projections
+                .filter((projection) => projection.mode === "editable")
+                .find((projection) => projection.event.id === this.editingId);
+            if (current) {
+                await this.handleDeleteEvent(current.event);
+            }
+        };
+        this.handleSave = async () => {
+            if (!this.schedulerService) {
+                this.error = "Brak polaczenia z Home Assistant. Nie mozna zapisac zmian w trybie demo.";
+                return;
+            }
             const errors = validateUiEvent(this.draft);
             if (errors.length) {
                 return;
             }
-            if (this.editingId) {
-                this.events = this.events.map((event) => event.id === this.editingId ? structuredClone(this.draft) : event);
+            this.saving = true;
+            this.error = "";
+            try {
+                if (this.editingId) {
+                    await this.schedulerService.editSchedule(eventToEditPayload(this.draft));
+                }
+                else {
+                    await this.schedulerService.createSchedule(eventToAddPayload(this.draft));
+                }
+                await this.refreshFromBackend(this.editingId ? "Zapisano zmiany harmonogramu." : "Dodano nowy harmonogram.");
+                if (!this.editingId) {
+                    this.draft = this.createEmptyDraft();
+                }
             }
-            else {
-                this.events = [...this.events, structuredClone(this.draft)];
-                this.editingId = this.draft.id;
+            catch (error) {
+                this.error = error instanceof Error ? error.message : "Nie udalo sie zapisac harmonogramu.";
             }
+            finally {
+                this.saving = false;
+            }
+        };
+        this.handleSearchInput = (event) => {
+            this.filterSearch = event.target.value;
+        };
+        this.handleStatusFilterChange = (event) => {
+            this.filterStatus = event.target.value;
+        };
+        this.handleTagFilterChange = (event) => {
+            this.filterTag = event.target.value;
+        };
+        this.handleReadonlyFilterChange = (event) => {
+            this.showReadonly = event.target.value === "show";
         };
         this.handleNameInput = (event) => {
-            const value = event.target.value;
-            this.draft = { ...this.draft, name: value };
+            this.draft = { ...this.draft, name: event.target.value };
+        };
+        this.handleTargetSelectionChange = (event) => {
+            const entityId = event.target.value;
+            const target = this.availableTargets.find((item) => item.entityId === entityId);
+            if (!target) {
+                return;
+            }
+            const nextKind = getActionKindsForTarget(target)[0];
+            this.draft = {
+                ...this.draft,
+                target,
+                action: {
+                    ...this.draft.action,
+                    kind: nextKind,
+                    label: getActionLabel(nextKind),
+                    service: nextKind === "custom_service" ? this.draft.action.service : undefined
+                },
+                durationMinutes: nextKind === "turn_on_for_duration" ? this.draft.durationMinutes ?? 30 : undefined
+            };
         };
         this.handleTargetInput = (event) => {
-            const value = event.target.value;
+            const entityId = event.target.value.trim();
+            const domain = entityId.split(".")[0] ?? this.draft.target.domain;
+            const supportedDomain = isSupportedTargetDomain(domain) ? domain : this.draft.target.domain;
             this.draft = {
                 ...this.draft,
                 target: {
                     ...this.draft.target,
-                    entityId: value
+                    entityId,
+                    domain: supportedDomain
                 }
             };
         };
         this.handleTargetLabelInput = (event) => {
-            const value = event.target.value;
             this.draft = {
                 ...this.draft,
                 target: {
                     ...this.draft.target,
-                    label: value
+                    label: event.target.value
                 }
             };
         };
         this.handleDomainChange = (event) => {
             const domain = event.target.value;
+            const nextKind = getActionKindsForTarget({ ...this.draft.target, domain })[0];
             this.draft = {
                 ...this.draft,
                 target: {
                     ...this.draft.target,
                     domain
-                }
+                },
+                action: {
+                    ...this.draft.action,
+                    kind: nextKind,
+                    label: getActionLabel(nextKind),
+                    service: nextKind === "custom_service" ? this.draft.action.service : undefined
+                },
+                durationMinutes: nextKind === "turn_on_for_duration" ? this.draft.durationMinutes ?? 30 : undefined
             };
         };
         this.handleActionChange = (event) => {
             const kind = event.target.value;
-            const labelMap = {
-                turn_on: "Wlacz",
-                turn_off: "Wylacz",
-                turn_on_for_duration: "Wlacz na czas",
-                run: "Uruchom",
-                activate: "Aktywuj",
-                custom_service: "Custom service"
-            };
             this.draft = {
                 ...this.draft,
                 action: {
                     ...this.draft.action,
                     kind,
-                    label: labelMap[kind]
+                    label: getActionLabel(kind),
+                    service: kind === "custom_service" ? this.draft.action.service ?? "" : undefined
                 },
                 durationMinutes: kind === "turn_on_for_duration" ? this.draft.durationMinutes ?? 30 : undefined
             };
         };
         this.handleStartTimeInput = (event) => {
-            const value = event.target.value;
-            this.draft = { ...this.draft, startTime: value };
+            this.draft = { ...this.draft, startTime: event.target.value };
         };
         this.handleDurationInput = (event) => {
             const raw = event.target.value;
-            this.draft = {
-                ...this.draft,
-                durationMinutes: raw ? Number(raw) : undefined
-            };
+            this.draft = { ...this.draft, durationMinutes: raw ? Number(raw) : undefined };
         };
         this.handleTagsInput = (event) => {
             const value = event.target.value;
@@ -428,24 +821,40 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                 enabled: event.target.value === "on"
             };
         };
-        this.handleNoteInput = (event) => {
+        this.handleServiceInput = (event) => {
             this.draft = {
                 ...this.draft,
-                note: event.target.value
+                action: {
+                    ...this.draft.action,
+                    service: event.target.value
+                }
             };
+        };
+        this.handleNoteInput = (event) => {
+            this.draft = { ...this.draft, note: event.target.value };
         };
     }
     setConfig(config) {
         this.config = config;
     }
     getCardSize() {
-        return 6;
+        return 7;
+    }
+    willUpdate(changedProperties) {
+        if (changedProperties.has("hass")) {
+            void this.handleHassChanged();
+        }
+    }
+    disconnectedCallback() {
+        super.disconnectedCallback();
+        void this.teardownSubscription();
     }
     render() {
         const validationErrors = validateUiEvent(this.draft);
+        const filtered = this.getFilteredProjections();
         let payloadPreview = "";
         try {
-            payloadPreview = JSON.stringify(eventToAddPayload(this.draft), null, 2);
+            payloadPreview = JSON.stringify(this.editingId ? eventToEditPayload(this.draft) : eventToAddPayload(this.draft), null, 2);
         }
         catch (error) {
             payloadPreview = error instanceof Error ? error.message : "Nie udalo sie przygotowac payloadu.";
@@ -460,45 +869,57 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                   <span class="eyebrow">Event-first MVP</span>
                   <h2>ZS Better Scheduler Card</h2>
                   <p>
-                    Pierwszy UI listy i formularza. Karta pracuje jeszcze na lokalnym stanie
-                    demonstracyjnym, ale pokazuje docelowy model: target, akcja, start, duration i dni.
+                    Lista i formularz pracuja teraz na prawdziwym store schedulerow, jesli karta ma dostep do
+                    <code>hass</code>. Niekompatybilne wpisy pokazywane sa jako readonly.
                   </p>
                 </div>
-                <button @click=${this.handleCreateNew}>Dodaj harmonogram</button>
+                <button @click=${this.handleCreateNew} ?disabled=${this.saving}>Dodaj harmonogram</button>
               </div>
+
+              ${this.error ? b `<div class="notice error">${this.error}</div>` : A}
+              ${this.notice ? b `<div class="notice">${this.notice}</div>` : A}
 
               <section class="list-card">
                 <div class="toolbar">
                   <h3>Harmonogramy</h3>
-                  <span class="helper">${this.events.length} wpisy</span>
+                  <span class="helper">${filtered.length} z ${this.projections.length} wpisow</span>
                 </div>
+
+                <div class="field-grid filters">
+                  <label>
+                    Szukaj
+                    <input .value=${this.filterSearch} @input=${this.handleSearchInput} placeholder="Salon, scena, skrypt..." />
+                  </label>
+                  <label>
+                    Status
+                    <select .value=${this.filterStatus} @change=${this.handleStatusFilterChange}>
+                      <option value="all">Wszystkie</option>
+                      <option value="active">Tylko aktywne</option>
+                      <option value="inactive">Tylko nieaktywne</option>
+                    </select>
+                  </label>
+                  <label>
+                    Tag
+                    <select .value=${this.filterTag} @change=${this.handleTagFilterChange}>
+                      <option value="all">Wszystkie tagi</option>
+                      ${this.availableTags.map((tag) => b `<option value=${tag}>${tag}</option>`)}
+                    </select>
+                  </label>
+                  <label>
+                    Readonly
+                    <select .value=${this.showReadonly ? "show" : "hide"} @change=${this.handleReadonlyFilterChange}>
+                      <option value="show">Pokazuj readonly</option>
+                      <option value="hide">Ukryj readonly</option>
+                    </select>
+                  </label>
+                </div>
+
                 <div class="list">
-                  ${this.events.map((event) => b `
-                      <article class="row">
-                        <div class="row-top">
-                          <div class="summary">${formatEventSummary(event)}</div>
-                          <span class="status ${event.enabled ? "" : "off"}">
-                            ${event.enabled ? "Aktywny" : "Nieaktywny"}
-                          </span>
-                        </div>
-                        <div class="row-meta">
-                          <div class="meta">${event.name}</div>
-                          <div class="meta">${event.target.entityId}</div>
-                        </div>
-                        <div class="row-meta">
-                          <div class="tag-list">
-                            ${event.tags.map((tag) => b `<span class="chip">#${tag}</span>`)}
-                          </div>
-                          <div class="meta">${event.sourceMeta?.compatibility ?? "native"}</div>
-                        </div>
-                        <div class="button-row">
-                          <button class="secondary" @click=${() => this.handleEdit(event)}>Edytuj</button>
-                          <button class="ghost" @click=${() => this.toggleEnabled(event.id)}>
-                            ${event.enabled ? "Wylacz" : "Wlacz"}
-                          </button>
-                        </div>
-                      </article>
-                    `)}
+                  ${this.loading ? b `<div class="notice">Ladowanie harmonogramow z Home Assistanta...</div>` : A}
+                  ${!this.loading && filtered.length === 0
+            ? b `<div class="notice warning">Brak harmonogramow pasujacych do filtrow.</div>`
+            : A}
+                  ${filtered.map((projection) => this.renderProjectionRow(projection))}
                 </div>
               </section>
             </div>
@@ -513,24 +934,36 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                 <div class="form">
                   <label>
                     Nazwa harmonogramu
-                    <input .value=${this.draft.name} @input=${this.handleNameInput} />
+                    <input .value=${this.draft.name} @input=${this.handleNameInput} ?disabled=${this.saving} />
                   </label>
 
                   <div class="field-grid two">
                     <label>
                       Target
-                      <input .value=${this.draft.target.entityId} @input=${this.handleTargetInput} />
+                      <select .value=${this.draft.target.entityId} @change=${this.handleTargetSelectionChange} ?disabled=${this.saving}>
+                        ${this.availableTargets.length === 0
+            ? b `<option value="">Brak wykrytych encji</option>`
+            : this.availableTargets.map((target) => b `
+                                <option value=${target.entityId}>
+                                  ${target.label} | ${target.entityId}
+                                </option>
+                              `)}
+                      </select>
                     </label>
                     <label>
-                      Label
-                      <input .value=${this.draft.target.label} @input=${this.handleTargetLabelInput} />
+                      Entity ID
+                      <input .value=${this.draft.target.entityId} @input=${this.handleTargetInput} ?disabled=${this.saving} />
                     </label>
                   </div>
 
                   <div class="field-grid two">
                     <label>
+                      Label
+                      <input .value=${this.draft.target.label} @input=${this.handleTargetLabelInput} ?disabled=${this.saving} />
+                    </label>
+                    <label>
                       Domena
-                      <select .value=${this.draft.target.domain} @change=${this.handleDomainChange}>
+                      <select .value=${this.draft.target.domain} @change=${this.handleDomainChange} ?disabled=${this.saving}>
                         <option value="light">light</option>
                         <option value="switch">switch</option>
                         <option value="script">script</option>
@@ -539,15 +972,20 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                         <option value="input_boolean">input_boolean</option>
                       </select>
                     </label>
+                  </div>
+
+                  <div class="field-grid two">
                     <label>
                       Akcja
-                      <select .value=${this.draft.action.kind} @change=${this.handleActionChange}>
-                        <option value="turn_on">Wlacz</option>
-                        <option value="turn_off">Wylacz</option>
-                        <option value="turn_on_for_duration">Wlacz na czas</option>
-                        <option value="run">Uruchom</option>
-                        <option value="activate">Aktywuj</option>
-                        <option value="custom_service">Custom service</option>
+                      <select .value=${this.draft.action.kind} @change=${this.handleActionChange} ?disabled=${this.saving}>
+                        ${this.getCurrentActionOptions().map((kind) => b `<option value=${kind}>${getActionLabel(kind)}</option>`)}
+                      </select>
+                    </label>
+                    <label>
+                      Status
+                      <select .value=${this.draft.enabled ? "on" : "off"} @change=${this.handleEnabledChange} ?disabled=${this.saving}>
+                        <option value="on">Aktywny</option>
+                        <option value="off">Nieaktywny</option>
                       </select>
                     </label>
                   </div>
@@ -555,7 +993,7 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                   <div class="field-grid two">
                     <label>
                       Start
-                      <input type="time" .value=${this.draft.startTime} @input=${this.handleStartTimeInput} />
+                      <input type="time" .value=${this.draft.startTime} @input=${this.handleStartTimeInput} ?disabled=${this.saving} />
                     </label>
                     <label>
                       Duration (min)
@@ -563,7 +1001,7 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                         type="number"
                         min="1"
                         .value=${String(this.draft.durationMinutes ?? "")}
-                        ?disabled=${this.draft.action.kind !== "turn_on_for_duration"}
+                        ?disabled=${this.draft.action.kind !== "turn_on_for_duration" || this.saving}
                         @input=${this.handleDurationInput}
                       />
                     </label>
@@ -577,6 +1015,7 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                             type="button"
                             class=${this.draft.weekdays.includes(day.key) ? "selected" : ""}
                             @click=${() => this.toggleWeekday(day.key)}
+                            ?disabled=${this.saving}
                           >
                             ${day.label}
                           </button>
@@ -587,38 +1026,67 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                   <div class="field-grid two">
                     <label>
                       Tagi
-                      <input .value=${this.draft.tags.join(", ")} @input=${this.handleTagsInput} />
+                      <input
+                        .value=${this.draft.tags.join(", ")}
+                        @input=${this.handleTagsInput}
+                        list="scheduler-tags"
+                        placeholder="daily, evening"
+                        ?disabled=${this.saving}
+                      />
                     </label>
                     <label>
-                      Status
-                      <select .value=${this.draft.enabled ? "on" : "off"} @change=${this.handleEnabledChange}>
-                        <option value="on">Aktywny</option>
-                        <option value="off">Nieaktywny</option>
-                      </select>
+                      Service
+                      <input
+                        .value=${this.draft.action.service ?? ""}
+                        @input=${this.handleServiceInput}
+                        ?disabled=${this.draft.action.kind !== "custom_service" || this.saving}
+                        placeholder="np. light.turn_on"
+                      />
                     </label>
                   </div>
 
+                  ${this.availableTags.length
+            ? b `
+                        <div class="tag-list">
+                          ${this.availableTags.map((tag) => b `
+                              <button type="button" class="ghost" @click=${() => this.addTagToDraft(tag)} ?disabled=${this.saving}>
+                                #${tag}
+                              </button>
+                            `)}
+                        </div>
+                      `
+            : A}
+                  <datalist id="scheduler-tags">
+                    ${this.availableTags.map((tag) => b `<option value=${tag}></option>`)}
+                  </datalist>
+
                   <label>
                     Notatka
-                    <textarea .value=${this.draft.note ?? ""} @input=${this.handleNoteInput}></textarea>
+                    <textarea .value=${this.draft.note ?? ""} @input=${this.handleNoteInput} ?disabled=${this.saving}></textarea>
                   </label>
 
                   <div class="helper">
                     Widok uproszczony: ${formatWeekdays(this.draft.weekdays)} ${this.draft.startTime} |
-                    ${this.draft.target.label || this.draft.target.entityId} | ${formatActionSummary(this.draft)}
+                    ${this.draft.target.label || this.draft.target.entityId || "Brak targetu"} |
+                    ${formatActionSummary(this.draft)}
                   </div>
 
                   ${validationErrors.length
-            ? b `
-                        <div class="warning">
-                          ${validationErrors.map((error) => b `<div>${error}</div>`)}
-                        </div>
-                      `
-            : null}
+            ? b `<div class="warning">${validationErrors.map((error) => b `<div>${error}</div>`)}</div>`
+            : A}
 
                   <div class="button-row">
-                    <button @click=${this.handleSave}>${this.editingId ? "Zapisz zmiany" : "Dodaj do listy"}</button>
-                    <button class="secondary" @click=${this.handleResetEditor}>Reset</button>
+                    <button @click=${this.handleSave} ?disabled=${this.saving || validationErrors.length > 0}>
+                      ${this.saving ? "Zapisywanie..." : this.editingId ? "Zapisz zmiany" : "Dodaj harmonogram"}
+                    </button>
+                    <button class="secondary" @click=${this.handleResetEditor} ?disabled=${this.saving}>Reset</button>
+                    ${this.editingId
+            ? b `
+                          <button class="ghost" @click=${this.handleDeleteCurrent} ?disabled=${this.saving}>
+                            Usun
+                          </button>
+                        `
+            : A}
                   </div>
                 </div>
               </section>
@@ -626,7 +1094,7 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
               <section class="payload-card">
                 <div class="toolbar">
                   <h3>Podglad adaptera</h3>
-                  <span class="helper">UI model -> scheduler payload</span>
+                  <span class="helper">${this.editingId ? "edit payload" : "add payload"}</span>
                 </div>
                 <pre>${payloadPreview}</pre>
               </section>
@@ -636,21 +1104,130 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
       </ha-card>
     `;
     }
+    renderProjectionRow(projection) {
+        if (projection.mode === "readonly") {
+            return b `
+        <article class="row readonly">
+          <div class="row-top">
+            <div class="summary">${projection.rawName}</div>
+            <span class="status readonly">Readonly</span>
+          </div>
+          <div class="meta">${projection.rawSummary}</div>
+          <div class="warning">Powod: ${projection.reason}</div>
+          ${projection.rawId ? b `<div class="meta">${projection.rawId}</div>` : A}
+        </article>
+      `;
+        }
+        const { event, warnings } = projection;
+        const scheduleEntityId = event.sourceMeta?.backendScheduleId;
+        return b `
+      <article class="row">
+        <div class="row-top">
+          <div class="summary">${formatEventSummary(event)}</div>
+          <span class="status ${event.enabled ? "" : "off"}">${event.enabled ? "Aktywny" : "Nieaktywny"}</span>
+        </div>
+        <div class="row-meta">
+          <div class="meta">${event.name}</div>
+          <div class="meta">${event.target.entityId}</div>
+        </div>
+        <div class="row-meta">
+          <div class="tag-list">
+            ${event.tags.map((tag) => b `<span class="chip">#${tag}</span>`)}
+            <span class="pill">${event.sourceMeta?.compatibility ?? "native"}</span>
+          </div>
+          <div class="meta">${warnings[0] ?? ""}</div>
+        </div>
+        <div class="button-row">
+          <button class="secondary" @click=${() => this.handleEdit(event)} ?disabled=${this.saving}>Edytuj</button>
+          <button class="ghost" @click=${() => this.handleToggleEnabled(event)} ?disabled=${this.saving || !scheduleEntityId}>
+            ${event.enabled ? "Wylacz" : "Wlacz"}
+          </button>
+          <button class="ghost" @click=${() => this.handleDeleteEvent(event)} ?disabled=${this.saving || !scheduleEntityId}>
+            Usun
+          </button>
+        </div>
+      </article>
+    `;
+    }
+    async handleHassChanged() {
+        this.availableTargets = this.hass ? buildTargetOptions(this.hass.states) : [];
+        this.ensureDraftTargetValidity();
+        if (!this.hass || this.isInitializedForHass) {
+            return;
+        }
+        this.schedulerService = new SchedulerService(this.hass);
+        this.isInitializedForHass = true;
+        this.notice = "Laczenie z scheduler-component...";
+        await this.refreshFromBackend();
+        await this.setupSubscription();
+    }
+    async setupSubscription() {
+        if (!this.schedulerService) {
+            return;
+        }
+        await this.teardownSubscription();
+        this.unsubscribeUpdates = await this.schedulerService.subscribeToUpdates(() => {
+            void this.refreshFromBackend("Odebrano aktualizacje schedulera.");
+        });
+    }
+    async teardownSubscription() {
+        if (!this.unsubscribeUpdates) {
+            return;
+        }
+        await this.unsubscribeUpdates();
+        this.unsubscribeUpdates = undefined;
+    }
+    async refreshFromBackend(successNotice = "Harmonogramy odswiezone.") {
+        if (!this.schedulerService) {
+            return;
+        }
+        this.loading = true;
+        this.error = "";
+        try {
+            const snapshot = await loadSchedulerSnapshot(this.schedulerService);
+            this.projections = snapshot.projections.length ? snapshot.projections : [];
+            this.availableTags = snapshot.tags.sort((left, right) => left.localeCompare(right, "pl"));
+            this.notice = successNotice;
+            this.syncDraftAfterRefresh();
+        }
+        catch (error) {
+            this.error = error instanceof Error ? error.message : "Nie udalo sie pobrac harmonogramow.";
+            this.notice = "";
+        }
+        finally {
+            this.loading = false;
+        }
+    }
+    syncDraftAfterRefresh() {
+        if (!this.editingId) {
+            return;
+        }
+        const editable = this.projections
+            .filter((projection) => projection.mode === "editable")
+            .find((projection) => projection.event.id === this.editingId);
+        if (editable) {
+            this.draft = structuredClone(editable.event);
+            return;
+        }
+        this.editingId = null;
+        this.draft = this.createEmptyDraft();
+    }
     createEmptyDraft() {
+        const target = this.availableTargets[0];
+        const inferredDomain = target?.domain ?? "";
+        const domain = isSupportedTargetDomain(inferredDomain) ? inferredDomain : "light";
+        const actionKind = getActionKindsForTarget(target ?? { domain})[0];
         return {
             id: `draft-${Date.now()}`,
             name: "",
             enabled: true,
             weekdays: ["mon", "tue", "wed", "thu", "fri"],
             startTime: "18:00",
-            target: {
-                entityId: "",
-                domain: "light",
-                label: ""
-            },
+            durationMinutes: actionKind === "turn_on_for_duration" ? 30 : undefined,
+            target: target ?? { entityId: "", domain, label: "" },
             action: {
-                kind: "turn_on",
-                label: "Wlacz"
+                kind: actionKind,
+                label: getActionLabel(actionKind)
             },
             tags: [],
             note: "",
@@ -659,26 +1236,102 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
             }
         };
     }
+    ensureDraftTargetValidity() {
+        if (!this.availableTargets.length) {
+            return;
+        }
+        const existing = this.availableTargets.find((target) => target.entityId === this.draft.target.entityId);
+        if (!existing && !this.draft.target.entityId) {
+            this.draft = this.createEmptyDraft();
+        }
+    }
+    getCurrentActionOptions() {
+        return getActionKindsForTarget(this.draft.target);
+    }
+    getFilteredProjections() {
+        return this.projections.filter((projection) => {
+            if (projection.mode === "readonly") {
+                if (!this.showReadonly || this.filterStatus !== "all" || this.filterTag !== "all") {
+                    return false;
+                }
+                const query = this.filterSearch.trim().toLowerCase();
+                return !query || projection.rawName.toLowerCase().includes(query) || projection.rawSummary.toLowerCase().includes(query);
+            }
+            const { event } = projection;
+            const query = this.filterSearch.trim().toLowerCase();
+            const matchesSearch = !query ||
+                event.name.toLowerCase().includes(query) ||
+                event.target.label.toLowerCase().includes(query) ||
+                event.target.entityId.toLowerCase().includes(query);
+            const matchesStatus = this.filterStatus === "all" ||
+                (this.filterStatus === "active" && event.enabled) ||
+                (this.filterStatus === "inactive" && !event.enabled);
+            const matchesTag = this.filterTag === "all" || event.tags.includes(this.filterTag);
+            return matchesSearch && matchesStatus && matchesTag;
+        });
+    }
     handleEdit(event) {
         this.editingId = event.id;
         this.draft = structuredClone(event);
+        this.notice = `Edytujesz: ${event.name || event.target.label}`;
     }
-    toggleEnabled(id) {
-        this.events = this.events.map((event) => event.id === id ? { ...event, enabled: !event.enabled } : event);
-        if (this.editingId === id) {
-            this.draft = {
-                ...this.draft,
-                enabled: !this.draft.enabled
-            };
+    async handleToggleEnabled(event) {
+        const entityId = event.sourceMeta?.backendScheduleId;
+        if (!entityId || !this.schedulerService) {
+            return;
+        }
+        this.saving = true;
+        this.error = "";
+        try {
+            await this.schedulerService.setScheduleEnabled(entityId, !event.enabled);
+            await this.refreshFromBackend(`Zmieniono status harmonogramu ${event.name || entityId}.`);
+        }
+        catch (error) {
+            this.error = error instanceof Error ? error.message : "Nie udalo sie zmienic statusu.";
+        }
+        finally {
+            this.saving = false;
+        }
+    }
+    async handleDeleteEvent(event) {
+        const entityId = event.sourceMeta?.backendScheduleId;
+        if (!entityId || !this.schedulerService) {
+            return;
+        }
+        if (!window.confirm(`Usunac harmonogram "${event.name || event.target.label}"?`)) {
+            return;
+        }
+        this.saving = true;
+        this.error = "";
+        try {
+            await this.schedulerService.removeSchedule(entityId);
+            if (this.editingId === event.id) {
+                this.editingId = null;
+                this.draft = this.createEmptyDraft();
+            }
+            await this.refreshFromBackend(`Usunieto harmonogram ${event.name || entityId}.`);
+        }
+        catch (error) {
+            this.error = error instanceof Error ? error.message : "Nie udalo sie usunac harmonogramu.";
+        }
+        finally {
+            this.saving = false;
         }
     }
     toggleWeekday(day) {
         const exists = this.draft.weekdays.includes(day);
         this.draft = {
             ...this.draft,
-            weekdays: exists
-                ? this.draft.weekdays.filter((entry) => entry !== day)
-                : [...this.draft.weekdays, day]
+            weekdays: exists ? this.draft.weekdays.filter((entry) => entry !== day) : [...this.draft.weekdays, day]
+        };
+    }
+    addTagToDraft(tag) {
+        if (this.draft.tags.includes(tag)) {
+            return;
+        }
+        this.draft = {
+            ...this.draft,
+            tags: [...this.draft.tags, tag]
         };
     }
 };
@@ -691,7 +1344,8 @@ ZsBetterSchedulerCard.styles = i$3 `
       padding: 18px;
       border-radius: 22px;
       background:
-        linear-gradient(160deg, rgba(28, 91, 64, 0.1), rgba(180, 133, 52, 0.12)),
+        radial-gradient(circle at top left, rgba(28, 91, 64, 0.16), transparent 32%),
+        linear-gradient(160deg, rgba(28, 91, 64, 0.08), rgba(180, 133, 52, 0.14)),
         var(--ha-card-background, var(--card-background-color, #fff));
       color: var(--primary-text-color);
     }
@@ -701,9 +1355,9 @@ ZsBetterSchedulerCard.styles = i$3 `
       gap: 18px;
     }
 
-    @media (min-width: 920px) {
+    @media (min-width: 980px) {
       .shell {
-        grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.9fr);
+        grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.95fr);
       }
     }
 
@@ -716,16 +1370,37 @@ ZsBetterSchedulerCard.styles = i$3 `
       border-bottom: 1px solid rgba(127, 127, 127, 0.18);
     }
 
-    .eyebrow {
+    .eyebrow,
+    .pill,
+    .status {
       display: inline-flex;
+      align-items: center;
       padding: 4px 10px;
       border-radius: 999px;
+      font-size: 0.77rem;
+      font-weight: 600;
+    }
+
+    .eyebrow {
       background: rgba(24, 84, 62, 0.12);
       color: #1c5b40;
-      font-size: 0.75rem;
-      font-weight: 600;
       letter-spacing: 0.04em;
       text-transform: uppercase;
+    }
+
+    .pill {
+      background: rgba(24, 84, 62, 0.08);
+      color: var(--primary-text-color);
+    }
+
+    .status.off {
+      background: rgba(120, 120, 120, 0.14);
+      color: var(--secondary-text-color);
+    }
+
+    .status.readonly {
+      background: rgba(158, 91, 0, 0.13);
+      color: #9e5b00;
     }
 
     .column {
@@ -738,16 +1413,19 @@ ZsBetterSchedulerCard.styles = i$3 `
     .payload-card {
       padding: 14px;
       border-radius: 18px;
-      background: rgba(255, 255, 255, 0.72);
+      background: rgba(255, 255, 255, 0.74);
       box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.12);
     }
 
-    .toolbar {
+    .toolbar,
+    .row-top,
+    .row-meta,
+    .button-row,
+    .filters {
       display: flex;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
       align-items: center;
-      margin-bottom: 8px;
       flex-wrap: wrap;
     }
 
@@ -765,14 +1443,9 @@ ZsBetterSchedulerCard.styles = i$3 `
       border: 1px solid rgba(127, 127, 127, 0.14);
     }
 
-    .row-top,
-    .row-meta,
-    .button-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
+    .row.readonly {
+      background: rgba(250, 246, 238, 0.9);
+      border-color: rgba(158, 91, 0, 0.18);
     }
 
     .summary {
@@ -780,9 +1453,35 @@ ZsBetterSchedulerCard.styles = i$3 `
       line-height: 1.4;
     }
 
-    .meta {
+    .meta,
+    .helper,
+    .warning,
+    p {
+      margin: 0;
+      line-height: 1.5;
       color: var(--secondary-text-color);
-      font-size: 0.92rem;
+    }
+
+    .warning {
+      color: #9e5b00;
+    }
+
+    .notice {
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(24, 84, 62, 0.08);
+      color: var(--primary-text-color);
+      font-size: 0.9rem;
+    }
+
+    .notice.error {
+      background: rgba(170, 52, 52, 0.11);
+      color: #8d2323;
+    }
+
+    .notice.warning {
+      background: rgba(158, 91, 0, 0.11);
+      color: #9e5b00;
     }
 
     .tag-list {
@@ -791,19 +1490,13 @@ ZsBetterSchedulerCard.styles = i$3 `
       gap: 6px;
     }
 
-    .chip,
-    .status {
+    .chip {
       display: inline-flex;
       align-items: center;
       padding: 5px 10px;
       border-radius: 999px;
       font-size: 0.78rem;
       background: rgba(24, 84, 62, 0.1);
-    }
-
-    .status.off {
-      background: rgba(120, 120, 120, 0.14);
-      color: var(--secondary-text-color);
     }
 
     button {
@@ -814,6 +1507,11 @@ ZsBetterSchedulerCard.styles = i$3 `
       cursor: pointer;
       background: #1c5b40;
       color: white;
+    }
+
+    button[disabled] {
+      opacity: 0.55;
+      cursor: not-allowed;
     }
 
     button.secondary {
@@ -838,7 +1536,8 @@ ZsBetterSchedulerCard.styles = i$3 `
     }
 
     @media (min-width: 560px) {
-      .field-grid.two {
+      .field-grid.two,
+      .filters {
         grid-template-columns: 1fr 1fr;
       }
     }
@@ -886,18 +1585,6 @@ ZsBetterSchedulerCard.styles = i$3 `
       color: white;
     }
 
-    .helper,
-    .warning,
-    p {
-      margin: 0;
-      line-height: 1.5;
-      color: var(--secondary-text-color);
-    }
-
-    .warning {
-      color: #9e5b00;
-    }
-
     h2,
     h3 {
       margin: 0;
@@ -920,13 +1607,43 @@ __decorate([
 ], ZsBetterSchedulerCard.prototype, "config", void 0);
 __decorate([
     r()
-], ZsBetterSchedulerCard.prototype, "events", void 0);
+], ZsBetterSchedulerCard.prototype, "projections", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "availableTags", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "availableTargets", void 0);
 __decorate([
     r()
 ], ZsBetterSchedulerCard.prototype, "draft", void 0);
 __decorate([
     r()
 ], ZsBetterSchedulerCard.prototype, "editingId", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "loading", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "saving", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "error", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "notice", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "filterSearch", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "filterStatus", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "filterTag", void 0);
+__decorate([
+    r()
+], ZsBetterSchedulerCard.prototype, "showReadonly", void 0);
 ZsBetterSchedulerCard = __decorate([
     t("zs-better-scheduler-card")
 ], ZsBetterSchedulerCard);

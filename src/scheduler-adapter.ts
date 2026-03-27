@@ -26,30 +26,34 @@ function mapConditions(conditions?: UiScheduleCondition[]): SchedulerConditionPa
 
 function buildActionPayload(event: UiScheduleEvent, kindOverride?: "turn_on" | "turn_off"): SchedulerActionPayload {
   const effectiveKind = kindOverride ?? event.action.kind;
+  const { domain, entityId } = event.target;
 
   switch (effectiveKind) {
     case "turn_on":
-      return { entity_id: event.target.entityId, service: `${event.target.domain}.turn_on` };
+      return { entity_id: entityId, service: `${domain}.turn_on` };
     case "turn_off":
-      return { entity_id: event.target.entityId, service: `${event.target.domain}.turn_off` };
+      return { entity_id: entityId, service: `${domain}.turn_off` };
     case "turn_on_for_duration":
       return {
-        entity_id: event.target.entityId,
-        service: `${event.target.domain}.turn_on`,
+        entity_id: entityId,
+        service: `${domain}.turn_on`,
         service_data: event.action.serviceData
       };
     case "run":
-      return { entity_id: event.target.entityId, service: `${event.target.domain}.turn_on` };
+      if (domain === "automation") {
+        return { entity_id: entityId, service: "automation.trigger", service_data: event.action.serviceData };
+      }
+      return { entity_id: entityId, service: `${domain}.turn_on`, service_data: event.action.serviceData };
     case "activate":
-      return { entity_id: event.target.entityId, service: `${event.target.domain}.turn_on` };
+      return { entity_id: entityId, service: `${domain}.turn_on`, service_data: event.action.serviceData };
     case "custom_service":
       return {
-        entity_id: event.target.entityId,
-        service: event.action.service ?? `${event.target.domain}.turn_on`,
+        entity_id: entityId,
+        service: event.action.service ?? `${domain}.turn_on`,
         service_data: event.action.serviceData
       };
     default:
-      return { entity_id: event.target.entityId, service: `${event.target.domain}.turn_on` };
+      return { entity_id: entityId, service: `${domain}.turn_on` };
   }
 }
 
@@ -159,6 +163,9 @@ function asWeekdays(days?: string[]): Weekday[] {
 }
 
 function actionLabelForService(service: string, durationMinutes?: number): string {
+  if (service === "automation.trigger") {
+    return "Uruchom";
+  }
   if (service.endsWith(".turn_off")) {
     return "Wylacz";
   }
@@ -305,7 +312,9 @@ export function backendItemToProjection(item: SchedulerBackendItem): UiScheduleP
   const service = firstAction.service;
 
   let actionKind: UiScheduleEvent["action"]["kind"] = "custom_service";
-  if (service.endsWith(".turn_on")) {
+  if (service === "automation.trigger") {
+    actionKind = "run";
+  } else if (service.endsWith(".turn_on")) {
     actionKind = domain === "script" ? "run" : domain === "scene" ? "activate" : "turn_on";
   } else if (service.endsWith(".turn_off")) {
     actionKind = "turn_off";
