@@ -842,6 +842,7 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
         const validationErrors = validateUiEvent(this.draft);
         const filtered = this.getFilteredProjections();
         const visibleTargets = this.getVisibleTargets();
+        const hasTargetQuery = this.targetSearch.trim().length > 0;
         let payloadPreview = "";
         try {
             payloadPreview = JSON.stringify(this.editingId ? eventToEditPayload(this.draft) : eventToAddPayload(this.draft), null, 2);
@@ -940,9 +941,11 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                     <label>
                       Wyniki wyszukiwania
                       <div class="target-results">
-                        ${visibleTargets.length === 0
-            ? b `<div class="meta">Brak pasujacych encji</div>`
-            : visibleTargets.slice(0, 8).map((target) => b `
+                        ${!hasTargetQuery
+            ? b `<div class="meta">Wpisz fragment nazwy albo entity_id, aby wyszukac target.</div>`
+            : visibleTargets.length === 0
+                ? b `<div class="meta">Brak pasujacych encji</div>`
+                : visibleTargets.map((target) => b `
                                 <button
                                   type="button"
                                   class="target-option ${this.draft.target.entityId === target.entityId ? "selected" : ""}"
@@ -1315,7 +1318,7 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
     getFilteredTargets() {
         const query = this.targetSearch.trim().toLowerCase();
         if (!query) {
-            return this.availableTargets;
+            return [];
         }
         return this.availableTargets.filter((target) => target.label.toLowerCase().includes(query) ||
             target.entityId.toLowerCase().includes(query) ||
@@ -1323,6 +1326,9 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
     }
     getVisibleTargets() {
         const filteredTargets = this.getFilteredTargets();
+        if (!this.targetSearch.trim()) {
+            return [];
+        }
         if (!this.draft.target.entityId) {
             return filteredTargets;
         }

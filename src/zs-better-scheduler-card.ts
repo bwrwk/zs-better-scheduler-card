@@ -393,6 +393,7 @@ export class ZsBetterSchedulerCard extends LitElement {
     const validationErrors = validateUiEvent(this.draft);
     const filtered = this.getFilteredProjections();
     const visibleTargets = this.getVisibleTargets();
+    const hasTargetQuery = this.targetSearch.trim().length > 0;
 
     let payloadPreview = "";
     try {
@@ -496,9 +497,11 @@ export class ZsBetterSchedulerCard extends LitElement {
                     <label>
                       Wyniki wyszukiwania
                       <div class="target-results">
-                        ${visibleTargets.length === 0
-                          ? html`<div class="meta">Brak pasujacych encji</div>`
-                          : visibleTargets.slice(0, 8).map(
+                        ${!hasTargetQuery
+                          ? html`<div class="meta">Wpisz fragment nazwy albo entity_id, aby wyszukac target.</div>`
+                          : visibleTargets.length === 0
+                            ? html`<div class="meta">Brak pasujacych encji</div>`
+                            : visibleTargets.map(
                               (target) => html`
                                 <button
                                   type="button"
@@ -901,7 +904,7 @@ export class ZsBetterSchedulerCard extends LitElement {
   private getFilteredTargets(): SchedulerTargetRef[] {
     const query = this.targetSearch.trim().toLowerCase();
     if (!query) {
-      return this.availableTargets;
+      return [];
     }
 
     return this.availableTargets.filter(
@@ -914,6 +917,10 @@ export class ZsBetterSchedulerCard extends LitElement {
 
   private getVisibleTargets(): SchedulerTargetRef[] {
     const filteredTargets = this.getFilteredTargets();
+    if (!this.targetSearch.trim()) {
+      return [];
+    }
+
     if (!this.draft.target.entityId) {
       return filteredTargets;
     }
