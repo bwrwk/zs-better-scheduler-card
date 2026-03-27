@@ -267,7 +267,8 @@ function eventToAddPayload(event) {
         name: event.name,
         weekdays: event.weekdays,
         timeslots,
-        tags: event.tags.length ? event.tags : undefined
+        tags: event.tags.length ? event.tags : undefined,
+        repeat_type: "repeat"
     };
 }
 function eventToEditPayload(event) {
@@ -497,13 +498,13 @@ class SchedulerService {
         }
     }
     async createSchedule(payload) {
-        await this.hass.callApi("POST", "scheduler/add", payload);
+        await this.hass.callService("scheduler", "add", payload);
     }
     async editSchedule(payload) {
-        await this.hass.callApi("POST", "scheduler/edit", payload);
+        await this.hass.callService("scheduler", "edit", payload);
     }
     async removeSchedule(entityId) {
-        await this.hass.callApi("POST", "scheduler/remove", { entity_id: entityId });
+        await this.hass.callService("scheduler", "remove", { entity_id: entityId });
     }
     async setScheduleEnabled(entityId, enabled) {
         await this.hass.callService("switch", enabled ? "turn_on" : "turn_off", {

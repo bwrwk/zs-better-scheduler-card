@@ -42,15 +42,15 @@ export class SchedulerService {
   }
 
   public async createSchedule(payload: Record<string, unknown>): Promise<void> {
-    await this.hass.callApi("POST", "scheduler/add", payload);
+    await this.hass.callService("scheduler", "add", payload);
   }
 
   public async editSchedule(payload: Record<string, unknown>): Promise<void> {
-    await this.hass.callApi("POST", "scheduler/edit", payload);
+    await this.hass.callService("scheduler", "edit", payload);
   }
 
   public async removeSchedule(entityId: string): Promise<void> {
-    await this.hass.callApi("POST", "scheduler/remove", { entity_id: entityId });
+    await this.hass.callService("scheduler", "remove", { entity_id: entityId });
   }
 
   public async setScheduleEnabled(entityId: string, enabled: boolean): Promise<void> {

@@ -69,6 +69,7 @@ export type SchedulerAddPayload = {
   weekdays: Weekday[];
   timeslots: SchedulerTimeslotPayload[];
   tags?: string[];
+  repeat_type: "repeat" | "single" | "pause";
 };
 
 export type SchedulerEditPayload = SchedulerAddPayload & {

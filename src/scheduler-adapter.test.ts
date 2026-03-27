@@ -26,6 +26,7 @@ describe("eventToAddPayload", () => {
     const payload = eventToAddPayload(event);
 
     expect(payload.weekdays).toEqual(["tue", "wed"]);
+    expect(payload.repeat_type).toBe("repeat");
     expect(payload.timeslots).toHaveLength(2);
     expect(payload.timeslots[0]).toMatchObject({
       start: "16:20",
