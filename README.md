@@ -22,7 +22,9 @@ Zamiast myslenia osia czasu, karta ma promowac myslenie eventem:
 W tej chwili repo zawiera:
 
 - szkielet projektu custom card
-- placeholder komponentu Lit
+- pierwszy roboczy komponent Lit z lista eventow i formularzem
+- warstwe adaptera `UI event -> scheduler payload`
+- testy adaptera dla podstawowych przypadkow
 - dokument architektoniczny MVP i warstwy adaptera
 
 Glowny dokument projektowy:
@@ -52,8 +54,8 @@ Glowny dokument projektowy:
 
 Nastepny krok po akceptacji projektu to implementacja:
 
-1. warstwy typow i adaptera
-2. providerow websocket i API
-3. listy harmonogramow
-4. formularza add/edit
-5. prostego widoku podsumowania
+1. providerow websocket i API
+2. podpiecia listy do realnych harmonogramow z backendu
+3. edycji i zapisu przez `scheduler/add` oraz `scheduler/edit`
+4. readonly fallback dla niekompatybilnych wpisow
+5. lekkiego target pickera opartego o encje HA
