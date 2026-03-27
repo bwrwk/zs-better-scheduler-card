@@ -745,14 +745,19 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
             const entityId = event.target.value.trim();
             const domain = entityId.split(".")[0] ?? this.draft.target.domain;
             const supportedDomain = isSupportedTargetDomain(domain) ? domain : this.draft.target.domain;
+            const knownTarget = this.availableTargets.find((target) => target.entityId === entityId);
             this.draft = {
                 ...this.draft,
                 target: {
                     ...this.draft.target,
                     entityId,
-                    domain: supportedDomain
+                    domain: knownTarget?.domain ?? supportedDomain,
+                    label: knownTarget?.label ?? this.draft.target.label
                 }
             };
+            if (knownTarget) {
+                this.targetSearch = knownTarget.label;
+            }
         };
         this.handleTargetLabelInput = (event) => {
             this.draft = {
@@ -848,6 +853,7 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
     render() {
         const validationErrors = validateUiEvent(this.draft);
         const filtered = this.getFilteredProjections();
+        const visibleTargets = this.getVisibleTargets();
         let payloadPreview = "";
         try {
             payloadPreview = JSON.stringify(this.editingId ? eventToEditPayload(this.draft) : eventToAddPayload(this.draft), null, 2);
@@ -946,9 +952,9 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                     <label>
                       Target
                       <select .value=${this.draft.target.entityId} @change=${this.handleTargetSelectionChange} ?disabled=${this.saving}>
-                        ${this.getFilteredTargets().length === 0
+                        ${visibleTargets.length === 0
             ? b `<option value="">Brak pasujacych encji</option>`
-            : this.getFilteredTargets().map((target) => b `
+            : visibleTargets.map((target) => b `
                                 <option value=${target.entityId}>
                                   ${target.label} | ${target.entityId}
                                 </option>
@@ -966,6 +972,10 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
                       Label
                       <input .value=${this.draft.target.label} @input=${this.handleTargetLabelInput} ?disabled=${this.saving} />
                     </label>
+                  </div>
+
+                  <div class="helper">
+                    Wybrany target: ${this.draft.target.label || "brak"} | ${this.draft.target.entityId || "brak"}
                   </div>
 
                   <div class="field-grid two">
@@ -1316,6 +1326,24 @@ let ZsBetterSchedulerCard = class ZsBetterSchedulerCard extends i {
         return this.availableTargets.filter((target) => target.label.toLowerCase().includes(query) ||
             target.entityId.toLowerCase().includes(query) ||
             target.domain.toLowerCase().includes(query));
+    }
+    getVisibleTargets() {
+        const filteredTargets = this.getFilteredTargets();
+        if (!this.draft.target.entityId) {
+            return filteredTargets;
+        }
+        const selectedAlreadyVisible = filteredTargets.some((target) => target.entityId === this.draft.target.entityId);
+        if (selectedAlreadyVisible) {
+            return filteredTargets;
+        }
+        return [
+            {
+                entityId: this.draft.target.entityId,
+                domain: this.draft.target.domain,
+                label: this.draft.target.label || this.draft.target.entityId
+            },
+            ...filteredTargets
+        ];
     }
     getFilteredProjections() {
         return this.projections.filter((projection) => {
