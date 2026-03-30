@@ -63,6 +63,10 @@ export class ZsBetterSchedulerCard extends LitElement {
   static styles = css`
     :host {
       display: block;
+      color: var(--primary-text-color, #1f2937);
+      --zsbsc-text-color: var(--primary-text-color, #1f2937);
+      --zsbsc-muted-color: var(--secondary-text-color, #5f6b7a);
+      --zsbsc-accent-color: #1c5b40;
     }
 
     .card {
@@ -72,7 +76,7 @@ export class ZsBetterSchedulerCard extends LitElement {
         radial-gradient(circle at top left, rgba(28, 91, 64, 0.16), transparent 32%),
         linear-gradient(160deg, rgba(28, 91, 64, 0.08), rgba(180, 133, 52, 0.14)),
         var(--ha-card-background, var(--card-background-color, #fff));
-      color: var(--primary-text-color);
+      color: var(--zsbsc-text-color);
     }
 
     .shell {
@@ -108,19 +112,19 @@ export class ZsBetterSchedulerCard extends LitElement {
 
     .eyebrow {
       background: rgba(24, 84, 62, 0.12);
-      color: #1c5b40;
+      color: var(--zsbsc-accent-color);
       letter-spacing: 0.04em;
       text-transform: uppercase;
     }
 
     .pill {
       background: rgba(24, 84, 62, 0.08);
-      color: var(--primary-text-color);
+      color: var(--zsbsc-text-color);
     }
 
     .status.off {
       background: rgba(120, 120, 120, 0.14);
-      color: var(--secondary-text-color);
+      color: var(--zsbsc-muted-color);
     }
 
     .status.readonly {
@@ -180,6 +184,7 @@ export class ZsBetterSchedulerCard extends LitElement {
     .summary {
       font-weight: 600;
       line-height: 1.4;
+      color: var(--zsbsc-text-color);
     }
 
     .meta,
@@ -188,7 +193,7 @@ export class ZsBetterSchedulerCard extends LitElement {
     p {
       margin: 0;
       line-height: 1.5;
-      color: var(--secondary-text-color);
+      color: var(--zsbsc-muted-color);
     }
 
     .warning {
@@ -199,7 +204,7 @@ export class ZsBetterSchedulerCard extends LitElement {
       padding: 10px 12px;
       border-radius: 14px;
       background: rgba(24, 84, 62, 0.08);
-      color: var(--primary-text-color);
+      color: var(--zsbsc-text-color);
       font-size: 0.9rem;
     }
 
@@ -234,7 +239,7 @@ export class ZsBetterSchedulerCard extends LitElement {
       text-align: left;
       border-radius: 12px;
       background: rgba(24, 84, 62, 0.06);
-      color: var(--primary-text-color);
+      color: var(--zsbsc-text-color);
       border: 1px solid rgba(127, 127, 127, 0.14);
     }
 
@@ -286,12 +291,12 @@ export class ZsBetterSchedulerCard extends LitElement {
 
     button.secondary {
       background: rgba(24, 84, 62, 0.08);
-      color: var(--primary-text-color);
+      color: var(--zsbsc-text-color);
     }
 
     button.ghost {
       background: transparent;
-      color: var(--primary-text-color);
+      color: var(--zsbsc-text-color);
       border: 1px solid rgba(127, 127, 127, 0.2);
     }
 
@@ -317,6 +322,7 @@ export class ZsBetterSchedulerCard extends LitElement {
       gap: 6px;
       font-size: 0.93rem;
       font-weight: 600;
+      color: var(--zsbsc-text-color);
     }
 
     input,
@@ -329,7 +335,7 @@ export class ZsBetterSchedulerCard extends LitElement {
       padding: 10px 12px;
       font: inherit;
       background: rgba(255, 255, 255, 0.96);
-      color: var(--primary-text-color);
+      color: var(--zsbsc-text-color);
     }
 
     textarea {
@@ -347,7 +353,7 @@ export class ZsBetterSchedulerCard extends LitElement {
       min-width: 42px;
       padding: 9px 0;
       background: rgba(24, 84, 62, 0.08);
-      color: var(--primary-text-color);
+      color: var(--zsbsc-text-color);
     }
 
     .weekday-row button.selected {
@@ -359,6 +365,19 @@ export class ZsBetterSchedulerCard extends LitElement {
     h3 {
       margin: 0;
       font-size: 1.05rem;
+      color: var(--zsbsc-text-color);
+    }
+
+    strong,
+    b,
+    code {
+      color: var(--zsbsc-text-color);
+    }
+
+    .intro h2,
+    .toolbar h3,
+    .readonly-box .summary {
+      color: var(--zsbsc-text-color);
     }
 
     pre {
@@ -367,6 +386,7 @@ export class ZsBetterSchedulerCard extends LitElement {
       word-break: break-word;
       font-size: 0.84rem;
       line-height: 1.5;
+      color: var(--zsbsc-text-color);
     }
   `;
 
